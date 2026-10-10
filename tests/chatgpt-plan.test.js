@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -340,6 +340,23 @@ test('failed persistence never activates credentials; cancellation during exchan
   while (!connection.pending.consumed && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
   connection.cancelSignIn(); release(); assert.equal((await completing).status, 409);
   assert.equal(connection.status().connected, false); assert.equal(store.record.accounts[0].credentials, null);
+});
+
+test('private storage rejects directory redirects before creating credentials', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'scopeguard-chatgpt-plan-test-'));
+  t.after(async () => {
+    const target = resolve(directory);
+    assert.equal(dirname(target).toLowerCase(), resolve(tmpdir()).toLowerCase());
+    assert.equal(basename(target).startsWith('scopeguard-chatgpt-plan-test-'), true);
+    await rm(target, { recursive: true, force: true });
+  });
+  const ordinary = join(directory, 'ordinary');
+  const redirect = join(directory, 'redirect');
+  await mkdir(ordinary);
+  // NTFS junction creation does not require administrator/developer privileges.
+  await symlink(ordinary, redirect, process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(ChatGPTPlanConnection.create({ store: new PrivateCredentialStore(join(redirect, 'chatgpt-plan')) }), /ordinary application credential directory/);
+  await assert.rejects(readFile(join(ordinary, 'chatgpt-plan', 'connection.json')), { code: 'ENOENT' });
 });
 
 test('real dedicated private storage persists registration and rejects a second process owner', async t => {

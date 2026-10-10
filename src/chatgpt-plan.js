@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { chmod, lstat, mkdir, open, readFile, realpath, rename, unlink } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { dirname, resolve } from 'node:path';
@@ -37,7 +37,15 @@ function problem(message, status = 502, code = 'CHATGPT_PLAN_ERROR') {
 
 async function privateDirectory(directory) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  if ((await lstat(directory)).isSymbolicLink() || (await realpath(directory)).toLowerCase() !== directory.toLowerCase()) throw problem('Use a dedicated, ordinary application credential directory.', 503);
+  // Windows TEMP may contain an ordinary 8.3 alias (for example RUNNER~1).
+  // realpath expands that name, so textual equality rejects safe directories.
+  // Check every path component instead: symlinks and NTFS junctions remain
+  // forbidden, including redirects in an ancestor of the dedicated directory.
+  for (let current = directory; ; current = dirname(current)) {
+    const info = await lstat(current);
+    if (!info.isDirectory() || info.isSymbolicLink()) throw problem('Use a dedicated, ordinary application credential directory.', 503);
+    if (dirname(current) === current) break;
+  }
   const credentialFile = resolve(directory, 'connection.json');
   let existingFile = false;
   try { const info = await lstat(credentialFile); if (!info.isFile() || info.isSymbolicLink()) throw problem('Use an ordinary private application credential file.', 503); existingFile = true; }
