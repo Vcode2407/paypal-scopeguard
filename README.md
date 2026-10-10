@@ -2,6 +2,10 @@
 
 A freelancer change-order assistant for the **PayPal AI Hackathon**. Compare incoming requests with an agreed scope, inspect exact clause evidence, review itemized pricing, and create a PayPal sandbox draft invoice. Prices come from user estimates and an hourly rate, never from model output.
 
+Public source: [Vcode2407/paypal-scopeguard](https://github.com/Vcode2407/paypal-scopeguard) · [judge walkthrough](docs/JUDGES.md) · [submission draft](docs/SUBMISSION.md).
+
+[Watch the narrated local walkthrough (2:18)](docs/videos/local-walkthrough.mp4). It shows the actual local review flow; [recording disclosure and transcript](docs/LOCAL_DEMO.md) explain the remaining live AI/PayPal steps.
+
 ## Run locally
 
 Node 22 or newer. The pinned `jose` dependency validates OpenAI identity tokens; all other runtime components use Node's built-in APIs.
@@ -11,11 +15,18 @@ npm ci
 npm start
 npm test
 npm run check
+npm run demo:verify
 ```
 
 Open http://127.0.0.1:4185. Compare the built-in requests: an additional FAQ page and booking integration are extra-work suggestions, while a headline-colour edit is included subject to revision limits. Review the actual clauses, select the extra work, preview the $500 total at $50/hour, and approve the quote. Export the JSON evidence.
 
 Default mode uses bounded local rules and **no AI model or PayPal connection**. Assessments and approvals are temporary and disappear on restart. The fixed agreement is fictional; this prototype assists review and does not determine contractual rights.
+
+The [judge walkthrough](docs/JUDGES.md) reproduces the account-free flow and lists the remaining live integration steps. `npm run demo:verify` starts an isolated local server with provider traffic explicitly blocked, verifies the $500 quote and approval, and writes clearly labelled evidence to ignored `artifacts/local-demo-evidence.json`. [GitHub CI](.github/workflows/ci.yml) is configured for Node 22 on Windows and Ubuntu; all provider tests use synthetic responses.
+
+![Actual local quote: FAQ page $200, booking integration $300, total $500.](docs/images/local-quote.png)
+
+The screenshot shows the actual local preview. It is not live AI or PayPal invoice evidence.
 
 ## Configure real AI and PayPal sandbox
 
@@ -38,7 +49,7 @@ Deadline: **November 13, 2026, 01:30 IST**. [Official rules](https://paypalaihac
 
 - [ ] Validate meaningful AI on actual requests and record the chosen model.
 - [ ] Create an actual sandbox invoice, manually exercise the sandbox payment lifecycle, and verify the returned status/amount.
-- [ ] Public licensed repository with runnable setup, source and assets.
+- [x] [Public MIT-licensed repository](https://github.com/Vcode2407/paypal-scopeguard) with runnable setup, source and assets.
 - [ ] Working judge-accessible demo or complete local setup instructions.
 - [ ] Public YouTube demonstration under three minutes and English project description.
 - [ ] Complete Devpost fields and maintain judge access through the required period.

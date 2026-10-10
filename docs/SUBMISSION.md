@@ -70,7 +70,7 @@ A useful scope assistant needs more than a classification. The reviewer needs th
 
 First, verify a meaningful runtime AI assessment on actual requests and record the provider and model used. Then create a real PayPal sandbox invoice, compare its amount with the approved quote, manually exercise the sandbox payment lifecycle, and refresh the returned status.
 
-Before submission, finish the judge setup and access instructions, publish the MIT-licensed repository, and record the verified workflow. Later product work would add editable agreements, durable invoice recovery records, revision-history tracking, and a separate client approval experience.
+The [MIT-licensed repository is public](https://github.com/Vcode2407/paypal-scopeguard). Before submission, complete live integration verification, finalize free judge access, and record the verified workflow. The [local judge walkthrough](JUDGES.md) is available now. Later product work would add editable agreements, durable invoice recovery records, revision-history tracking, and a separate client approval experience.
 
 ## Demonstration outline — 2 minutes 40 seconds
 
@@ -91,10 +91,11 @@ Record the AI and PayPal portions only after real integration verification. Unti
 | Project name | ScopeGuard |
 | Tagline | Turn new client requests into reviewed scope evidence, clear pricing, and a PayPal sandbox invoice. |
 | Built with | Node.js, JavaScript, HTML, CSS; PayPal sandbox Invoicing adapter. Add the verified runtime AI provider/model after the live run. |
-| Public repository | **Pending URL.** MIT license is present locally; public publication and repository access are unverified. |
-| Working build / judge instructions | **Pending final access path.** Local workflow starts at `http://127.0.0.1:4185`; complete provider setup and access instructions still need validation. |
+| Public repository | [Vcode2407/paypal-scopeguard](https://github.com/Vcode2407/paypal-scopeguard), public with MIT license. |
+| Working build / judge instructions | [Account-free local walkthrough](JUDGES.md), starting at `http://127.0.0.1:4185`. Live provider access and final free judge-access arrangement remain pending. |
 | Public YouTube video | **Pending URL.** Target duration: 2:40. |
-| Screenshots | **Pending.** Capture the verified assessment, reviewed quote, and actual sandbox invoice status. |
+| Local prototype walkthrough | [Actual narrated recording, 2:18](videos/local-walkthrough.mp4). Local rules, no live AI or PayPal. [Disclosure/transcript](LOCAL_DEMO.md). This is separate from the final required YouTube demonstration. |
+| Screenshots | [Actual local quote preview](images/local-quote.png). Live AI and actual sandbox invoice screenshots remain pending. |
 | Runtime AI evidence | **Pending.** Record actual provider, model, request example, and observed output. |
 | PayPal evidence | **Pending.** Record the actual sandbox invoice, matching amount, and refreshed payment status. |
 | Entrant / team details | **Pending human completion.** Confirm names, roles, eligibility, and required declarations. |
@@ -106,4 +107,4 @@ From the repository root, install pinned dependencies with `npm ci`, start with 
 
 The event requires meaningful integration with PayPal's free sandbox and an AI tool/model/platform. It accepts a working hosted demo or complete local run instructions, requires public open-source code, English materials, and a public YouTube demonstration under three minutes. Deadline: **November 13, 2026, 01:30 IST** (November 12, noon PST). Arrange unrestricted, free judge access through the judging period ending **December 15, 2026**. [Official rules](https://paypalaihackathon.devpost.com/rules)
 
-The local prototype alone does not establish completion of those requirements. Live AI and PayPal verification, public links, final judge access, and the submission itself remain pending.
+The public repository and local setup are available. The local prototype alone does not establish completion of all requirements. Live AI and PayPal verification, public video, final judge access, and the submission itself remain pending.
