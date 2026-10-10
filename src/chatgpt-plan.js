@@ -51,14 +51,57 @@ async function privateDirectory(directory) {
   try { const info = await lstat(credentialFile); if (!info.isFile() || info.isSymbolicLink()) throw problem('Use an ordinary private application credential file.', 503); existingFile = true; }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   if (process.platform !== 'win32') { await chmod(directory, 0o700); if (existingFile) await chmod(credentialFile, 0o600); return; }
-  // Reset only this dedicated app directory's DACL. No token appears in a
-  // command, argument, environment variable, output, or user-visible diagnostic.
-  // An NTFS directory owner can write its DACL even when inherited access only
-  // grants Modify. Setting Owner as well unnecessarily requests WRITE_OWNER
-  // and fails on ordinary secondary-drive folders. Verify and preserve owner.
-  const script = "$ErrorActionPreference='Stop'; $p=$env:SCOPEGUARD_PRIVATE_DIRECTORY; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; $existing=[System.IO.Directory]::GetAccessControl($p); if($existing.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value){throw 'Application credential directory must belong to the current user'}; $acl=New-Object System.Security.AccessControl.DirectorySecurity; $acl.SetAccessRuleProtection($true,$false); $inherit=[System.Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'; $prop=[System.Security.AccessControl.PropagationFlags]::None; $allow=[System.Security.AccessControl.AccessControlType]::Allow; $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'FullControl',$inherit,$prop,$allow))); $system=New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18'); $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($system,'FullControl',$inherit,$prop,$allow))); [System.IO.Directory]::SetAccessControl($p,$acl); $f=[System.IO.Path]::Combine($p,'connection.json'); if([System.IO.File]::Exists($f)){ $existingFile=[System.IO.File]::GetAccessControl($f); if($existingFile.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value){throw 'Application credential file must belong to the current user'}; $fileAcl=New-Object System.Security.AccessControl.FileSecurity; $fileAcl.SetAccessRuleProtection($true,$false); $fileAcl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'FullControl',$allow))); $fileAcl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($system,'FullControl',$allow))); [System.IO.File]::SetAccessControl($f,$fileAcl) }";
+  await protectWindowsPermissions(directory, existingFile ? credentialFile : '');
+}
+
+async function protectWindowsPermissions(directory, credentialFile) {
+  // Paths alone enter this helper. No token appears in a command, argument,
+  // environment variable, output or user-visible diagnostic.
+  // Preserve an existing user owner: resetting it would require WRITE_OWNER
+  // unnecessarily on ordinary Modify-only secondary-drive directories.
+  const script = `
+$ErrorActionPreference='Stop'
+$identity=[System.Security.Principal.WindowsIdentity]::GetCurrent()
+$sid=$identity.User
+$principal=New-Object System.Security.Principal.WindowsPrincipal($identity)
+$system=New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+$allow=[System.Security.AccessControl.AccessControlType]::Allow
+function Confirm-ApplicationOwner($p,$isDirectory) {
+  if($isDirectory){$existing=[System.IO.Directory]::GetAccessControl($p)}else{$existing=[System.IO.File]::GetAccessControl($p)}
+  $owner=$existing.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+  if($owner -ne $sid.Value){
+    # Elevated processes may create Administrators-owned objects by default.
+    # Accept that case only for the current elevated administrator, and only
+    # if Windows grants the actual ownership write. Other owners fail closed.
+    if($owner -ne 'S-1-5-32-544' -or -not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'APPLICATION_OWNER_REQUIRED'}
+    $existing.SetOwner($sid)
+    if($isDirectory){[System.IO.Directory]::SetAccessControl($p,$existing);$verified=[System.IO.Directory]::GetAccessControl($p)}else{[System.IO.File]::SetAccessControl($p,$existing);$verified=[System.IO.File]::GetAccessControl($p)}
+    if($verified.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value){throw 'APPLICATION_OWNER_REQUIRED'}
+  }
+}
+$p=$env:SCOPEGUARD_PRIVATE_DIRECTORY
+if($p){
+  Confirm-ApplicationOwner $p $true
+  $acl=New-Object System.Security.AccessControl.DirectorySecurity
+  $acl.SetAccessRuleProtection($true,$false)
+  $inherit=[System.Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'
+  $prop=[System.Security.AccessControl.PropagationFlags]::None
+  $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'FullControl',$inherit,$prop,$allow)))
+  $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($system,'FullControl',$inherit,$prop,$allow)))
+  [System.IO.Directory]::SetAccessControl($p,$acl)
+}
+$f=$env:SCOPEGUARD_PRIVATE_FILE
+if($f){
+  Confirm-ApplicationOwner $f $false
+  $fileAcl=New-Object System.Security.AccessControl.FileSecurity
+  $fileAcl.SetAccessRuleProtection($true,$false)
+  $fileAcl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'FullControl',$allow)))
+  $fileAcl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($system,'FullControl',$allow)))
+  [System.IO.File]::SetAccessControl($f,$fileAcl)
+}
+`;
   try {
-    await runFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, timeout: 10000, maxBuffer: 2048, env: { ...process.env, SCOPEGUARD_PRIVATE_DIRECTORY: directory } });
+    await runFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, timeout: 10000, maxBuffer: 2048, env: { ...process.env, SCOPEGUARD_PRIVATE_DIRECTORY: directory, SCOPEGUARD_PRIVATE_FILE: credentialFile } });
   } catch { throw problem('Private Windows credential permissions could not be established. No tokens were saved.', 503, 'PRIVATE_STORAGE_REQUIRED'); }
 }
 
@@ -87,7 +130,11 @@ export class PrivateCredentialStore {
     const temporary = resolve(this.directory, `connection-${randomUUID()}.tmp`);
     try {
       const file = await open(temporary, 'wx', 0o600);
-      try { await file.writeFile(JSON.stringify(record)); await file.sync(); }
+      try {
+        // Protect ownership/DACL before sensitive content enters a new file.
+        if (process.platform === 'win32') await protectWindowsPermissions('', temporary);
+        await file.writeFile(JSON.stringify(record)); await file.sync();
+      }
       finally { await file.close(); }
       await rename(temporary, this.file);
     } finally { await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; }); }

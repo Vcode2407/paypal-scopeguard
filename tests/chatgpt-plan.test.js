@@ -359,6 +359,13 @@ test('private storage rejects directory redirects before creating credentials', 
   await assert.rejects(readFile(join(ordinary, 'chatgpt-plan', 'connection.json')), { code: 'ENOENT' });
 });
 
+async function assertWindowsPrivatePermissions(directory) {
+  if (process.platform !== 'win32') return;
+  const permissions = "$ErrorActionPreference='Stop'; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $p=$env:SCOPEGUARD_PRIVATE_DIRECTORY; $directoryAcl=[System.IO.Directory]::GetAccessControl($p); $fileAcl=[System.IO.File]::GetAccessControl([System.IO.Path]::Combine($p,'connection.json')); $allowed=@($sid,'S-1-5-18'); $rules=@($directoryAcl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])) + @($fileAcl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])); [pscustomobject]@{directoryOwnedByUser=($directoryAcl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -eq $sid); fileOwnedByUser=($fileAcl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -eq $sid); directoryProtected=$directoryAcl.AreAccessRulesProtected; fileProtected=$fileAcl.AreAccessRulesProtected; onlyPrivateTrustees=(@($rules | Where-Object { $allowed -notcontains $_.IdentityReference.Value -or $_.IsInherited -or $_.AccessControlType -ne 'Allow' }).Count -eq 0)} | ConvertTo-Json -Compress";
+  const result = await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(permissions, 'utf16le').toString('base64')], { windowsHide: true, timeout: 10000, env: { ...process.env, SCOPEGUARD_PRIVATE_DIRECTORY: directory } });
+  assert.deepEqual(JSON.parse(result.stdout), { directoryOwnedByUser: true, fileOwnedByUser: true, directoryProtected: true, fileProtected: true, onlyPrivateTrustees: true });
+}
+
 test('real dedicated private storage persists registration and rejects a second process owner', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'scopeguard-chatgpt-plan-test-'));
   t.after(async () => {
@@ -372,12 +379,13 @@ test('real dedicated private storage persists registration and rejects a second 
     // Reproduce secondary-drive inherited Modify permissions: owner has
     // implicit WRITE_DAC, but explicitly setting the owner needs WRITE_OWNER.
     // Protection must succeed by preserving ownership rather than weakening it.
-    const script = "$ErrorActionPreference='Stop'; $p=$env:SCOPEGUARD_PRIVATE_DIRECTORY; [System.IO.Directory]::CreateDirectory($p) | Out-Null; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=New-Object System.Security.AccessControl.DirectorySecurity; $acl.SetAccessRuleProtection($true,$false); $inherit=[System.Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'; $prop=[System.Security.AccessControl.PropagationFlags]::None; $allow=[System.Security.AccessControl.AccessControlType]::Allow; $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'Modify',$inherit,$prop,$allow))); $system=New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18'); $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($system,'FullControl',$inherit,$prop,$allow))); [System.IO.Directory]::SetAccessControl($p,$acl)";
+    const script = "$ErrorActionPreference='Stop'; $p=$env:SCOPEGUARD_PRIVATE_DIRECTORY; [System.IO.Directory]::CreateDirectory($p) | Out-Null; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; $existing=[System.IO.Directory]::GetAccessControl($p); if($existing.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value){$existing.SetOwner($sid); [System.IO.Directory]::SetAccessControl($p,$existing)}; $acl=New-Object System.Security.AccessControl.DirectorySecurity; $acl.SetAccessRuleProtection($true,$false); $inherit=[System.Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'; $prop=[System.Security.AccessControl.PropagationFlags]::None; $allow=[System.Security.AccessControl.AccessControlType]::Allow; $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'Modify',$inherit,$prop,$allow))); $system=New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18'); $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($system,'FullControl',$inherit,$prop,$allow))); [System.IO.Directory]::SetAccessControl($p,$acl)";
     await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, timeout: 10000, env: { ...process.env, SCOPEGUARD_PRIVATE_DIRECTORY: dedicated } });
   }
   const first = await ChatGPTPlanConnection.create({ store: new PrivateCredentialStore(dedicated) });
   const hostId = first.record.hostId;
   try {
+    await assertWindowsPrivatePermissions(dedicated);
     await assert.rejects(ChatGPTPlanConnection.create({ store: new PrivateCredentialStore(dedicated) }), error => error.code === 'CONNECTION_IN_USE');
     const disk = JSON.parse(await readFile(join(dedicated, 'connection.json'), 'utf8'));
     assert.equal(disk.hostId, hostId); assert.equal(disk.accounts.length, 0);
@@ -385,4 +393,10 @@ test('real dedicated private storage persists registration and rejects a second 
   const reloaded = await ChatGPTPlanConnection.create({ store: new PrivateCredentialStore(dedicated) });
   try { assert.equal(reloaded.record.hostId, hostId); assert.equal(reloaded.status().connected, false); }
   finally { await reloaded.close(); }
+  await t.test('a new dedicated directory also establishes a current-user private owner', async () => {
+    const freshDirectory = join(directory, 'fresh', 'chatgpt-plan');
+    const fresh = await ChatGPTPlanConnection.create({ store: new PrivateCredentialStore(freshDirectory) });
+    try { assert.equal(fresh.status().connected, false); assert.equal(fresh.record.accounts.length, 0); await assertWindowsPrivatePermissions(freshDirectory); }
+    finally { await fresh.close(); }
+  });
 });

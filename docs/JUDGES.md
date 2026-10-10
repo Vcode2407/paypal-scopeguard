@@ -34,7 +34,7 @@ Assessments and quotes are in memory and expire. Restarting clears them. The cur
 
 ## Automated evidence
 
-`npm test` currently passes **46 tests** locally. Provider responses are synthetic. The suite checks input limits, supplied-clause grounding, deterministic cents, approval fingerprints, expiry/origin protection, PayPal draft/status/error behavior and optional SIWC authentication/renewal races. It also exercises real Windows credential-file ownership/DACL handling and rejects redirected credential directories in temporary fixtures. These tests do not perform live inference or call PayPal accounts.
+`npm test` currently passes **47 tests** locally. Provider responses are synthetic. The suite checks input limits, supplied-clause grounding, deterministic cents, approval fingerprints, expiry/origin protection, PayPal draft/status/error behavior and optional SIWC authentication/renewal races. It also exercises real Windows credential-file ownership/DACL handling and rejects redirected credential directories in temporary fixtures. These tests do not perform live inference or call PayPal accounts.
 
 The public GitHub Actions workflow is configured to run the same installation, syntax checks and tests on Node 22 with both Ubuntu and Windows. Actions are pinned to verified upstream release commits and the workflow requires no sponsor secrets. A green hosted run must be verified on the repository's Actions page after publication; local results are not substituted for a hosted result.
 
