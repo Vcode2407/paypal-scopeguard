@@ -28,6 +28,8 @@ The [judge walkthrough](docs/JUDGES.md) reproduces the account-free flow and lis
 
 The screenshot shows the actual local preview. It is not live AI or PayPal invoice evidence.
 
+After the account owner has completed official ChatGPT consent and selected an account-returned model, `npm run evidence:chatgpt -- --confirm-plan-use` requests exactly one assessment of the fixed fictional sample and saves sanitized requested/returned model provenance to ignored `artifacts/chatgpt-live-evidence.json`. This explicit command consumes plan allowance. It refuses incomplete setup and never signs in, chooses another provider, retries inference or calls PayPal. [One-shot evidence details](docs/CHATGPT_PLAN.md#capture-one-fictional-live-assessment).
+
 ## Configure real AI and PayPal sandbox
 
 Copy `.env.example` to ignored `.env`. Restart after editing.

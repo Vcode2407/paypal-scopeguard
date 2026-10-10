@@ -34,9 +34,9 @@ Assessments and quotes are in memory and expire. Restarting clears them. The cur
 
 ## Automated evidence
 
-`npm test` currently passes **47 tests** locally. Provider responses are synthetic. The suite checks input limits, supplied-clause grounding, deterministic cents, approval fingerprints, expiry/origin protection, PayPal draft/status/error behavior and optional SIWC authentication/renewal races. It also exercises real Windows credential-file ownership/DACL handling and rejects redirected credential directories in temporary fixtures. These tests do not perform live inference or call PayPal accounts.
+`npm test` currently passes **50 tests** locally. Provider responses are synthetic. The suite checks input limits, supplied-clause grounding, deterministic cents, approval fingerprints, expiry/origin protection, PayPal draft/status/error behavior, optional SIWC authentication/renewal races and the guarded one-shot evidence command. It also exercises real Windows credential-file ownership/DACL handling and rejects redirected credential directories in temporary fixtures. These tests do not perform live inference or call PayPal accounts.
 
-The public GitHub Actions workflow is configured to run the same installation, syntax checks and tests on Node 22 with both Ubuntu and Windows. Actions are pinned to verified upstream release commits and the workflow requires no sponsor secrets. A green hosted run must be verified on the repository's Actions page after publication; local results are not substituted for a hosted result.
+The public GitHub Actions workflow runs installation, syntax checks, tests and the account-free reproduction on Node 22 with both Ubuntu and Windows. Actions are pinned to verified upstream release commits and the workflow requires no sponsor secrets. The [47-test hosted baseline](https://github.com/Vcode2407/paypal-scopeguard/actions/runs/38074868067) completed successfully at commit `2e356d1` on both operating systems. Check the [latest workflow run](https://github.com/Vcode2407/paypal-scopeguard/actions/workflows/ci.yml) for subsequent commits; local results are not substituted for hosted results.
 
 ## Optional meaningful AI verification
 
@@ -45,6 +45,8 @@ The [ChatGPT connection guide](CHATGPT_PLAN.md) explains local Sign in with Chat
 Alternatively, set a valid Nebius Token Factory API key and explicit account-available model in ignored `.env`, then explicitly select Nebius. This can incur that account's provider charges. ScopeGuard does not silently switch to a billable provider or claim a local-rule result came from AI.
 
 An accepted live assessment records the actual provider/model and separate requested/returned model provenance. Retain a sanitized export and public demo footage showing a completed, grounded result. Never include API keys, OAuth tokens, authorization URLs or private account details in screenshots, videos or repository files.
+
+For one reproducible fictional assessment after owner consent and model selection, run `npm run evidence:chatgpt -- --confirm-plan-use`. This explicit action consumes that account's plan allowance, dispatches at most one assessment, refuses incomplete setup and saves whitelisted evidence to ignored `artifacts/chatgpt-live-evidence.json`. It never creates invoices or falls back to Nebius. [Exact behavior and disclosure](CHATGPT_PLAN.md#capture-one-fictional-live-assessment).
 
 ## Optional real PayPal sandbox verification
 

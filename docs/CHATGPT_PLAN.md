@@ -19,6 +19,20 @@ Do not paste ChatGPT passwords or tokens into ScopeGuard. Do not copy another ap
 
 Returning sign-in reuses the issued client ID and stable host ID. Registrations whose code exchange failed are kept as **sign-in needed** so a retry can reuse the same issued registration. New credentials become active only after validating the corresponding identity. The app deliberately omits an ID-token hint from the browser-facing authorization URL; returning users may therefore see an account selector. It still requires the same validated subject for that registration. The documented flow explains this selector behavior. [Registration and sign-in](https://developers.openai.com/siwc/token-sharing-open-source/sign-in).
 
+## Capture one fictional live assessment
+
+After completing sign-in and plan consent yourself, loading the account catalog and selecting an available model, keep ScopeGuard running. To explicitly authorize one assessment using that selected account's plan allowance:
+
+```powershell
+npm run evidence:chatgpt -- --confirm-plan-use
+```
+
+Use `--port=4185` or another explicit local port if needed. The command reads only the local app's sanitized status and fixed fictional sample. It refuses unconnected accounts, missing plan permission, pending sign-in, missing model or exhausted budget before dispatching inference. It does not read credential files, initiate sign-in, grant permission, select models, switch providers or contact PayPal.
+
+There is at most one assessment POST and no automatic retry or fallback. A successful result must identify actual ChatGPT use, preserve the exact selected/requested and returned model IDs, contain a completed response ID and grounded clause evidence, and advance the app's attempt/accepted counters by exactly one. A canonical returned model may differ from the selected alias; both IDs and their exact-equality flag are retained. The output is `artifacts/chatgpt-live-evidence.json`, ignored by Git. It contains the fictional inputs and a whitelisted assessment/provenance record, without account labels or credentials. Review it before sharing.
+
+This command has only been tested with injected local API fixtures; no real model request was run during preparation. A synthetic success is not live evidence. Run this command only when ready to use your actual allowance. Failures can consume the one dispatched attempt; resolve the reported issue before explicitly deciding to run it again. It does not establish PayPal sandbox evidence.
+
 ## Security and request behavior
 
 The backend creates the loopback listener before preparing authorization. Each attempt has fresh random state, nonce and S256 PKCE values. The exact callback is `http://127.0.0.1:<ephemeral-port>/auth/callback`; ScopeGuard’s main port stays 4185. The same callback URI is used for the code exchange. Duplicate or expired callbacks fail, and cancellation cannot publish credentials during a pending private-store write. The `jose` library validates the ID token against the public JWKS, expected issuer, issued client audience, expiry, nonce and subject. The authorization URL contains one-time state: do not log it or callback URLs. [Sign-in protocol](https://developers.openai.com/siwc/token-sharing-open-source/sign-in), [OpenAI identity validation](https://developers.openai.com/siwc/website).
