@@ -269,6 +269,55 @@ test('failed, interrupted, unidentified, oversized and ungrounded streams never 
   });
 });
 
+test('unexpected inference bodies cancel before refusal and expose only bounded status/type diagnostics', async t => {
+  const marker = 'synthetic-private-header-body-identity';
+  const cases = [
+    { contentType: `application/json; private=${marker}; note=text/event-stream`, status: 200, expectedType: 'application/json', expectedStatus: 200 },
+    { contentType: `application/not-sse; note=text/event-stream; private=${marker}`, status: 202, expectedType: 'other', expectedStatus: 202 },
+    { contentType: undefined, status: 200, expectedType: 'missing', expectedStatus: 200 },
+    { contentType: `text/html; private=${marker}`, status: `200-${marker}`, expectedType: 'other', expectedStatus: null },
+  ];
+  for (const scenario of cases) {
+    let reads = 0, cancelled = false;
+    const body = new ReadableStream({
+      pull(controller) { reads++; controller.enqueue(Buffer.from(marker)); },
+      cancel() { cancelled = true; },
+    }, { highWaterMark: 0 });
+    const response = { ok: true, status: scenario.status, statusText: marker, body, headers: new Headers(scenario.contentType === undefined ? {} : { 'Content-Type': scenario.contentType, 'X-Private-Identity': marker }) };
+    const { connection, fixture } = await connected(t, { responses: () => response });
+    await connection.selectModel(MODEL);
+    const assistant = new ChatGPTPlanAssistant({ connection, maxCalls: 1 });
+    await assert.rejects(assistant.assess(SAMPLE), error => {
+      assert.equal(cancelled, true, 'The unexpected body is cancelled before the error is delivered');
+      assert.equal(error.code, 'STREAM_INVALID');
+      assert.deepEqual(error.providerDiagnostic, { httpStatus: scenario.expectedStatus, contentTypeCategory: scenario.expectedType });
+      assert.deepEqual(Object.keys(error.providerDiagnostic).sort(), ['contentTypeCategory', 'httpStatus']);
+      assert.match(error.message, new RegExp(`provider HTTP ${scenario.expectedStatus ?? 'unavailable'}; content type: ${scenario.expectedType}`));
+      assert.doesNotMatch(error.message + JSON.stringify(error), /synthetic-private|X-Private-Identity|statusText|stub-access|stub-refresh/);
+      return true;
+    });
+    assert.equal(reads, 0, 'No unexpected JSON, HTML or private body is read');
+    assert.equal(assistant.status().attemptedCalls, 1);
+    assert.equal(assistant.status().verifiedInferenceCalls, 0);
+    await assert.rejects(assistant.assess(SAMPLE), error => error.code === 'PROVIDER_CALL_LIMIT');
+    assert.equal(fixture.apiCalls, 1, 'No automatic retry or fallback');
+  }
+});
+
+test('stream MIME parameters remain supported while an absent body cannot bypass completion', async t => {
+  const { connection } = await connected(t, { responses: () => new Response(stream().body, { headers: { 'Content-Type': 'Text/Event-Stream; charset=utf-8' } }) });
+  await connection.selectModel(MODEL);
+  const assistant = new ChatGPTPlanAssistant({ connection, maxCalls: 1 });
+  assert.equal((await assistant.assess(SAMPLE)).aiUsed, true);
+  assert.equal(assistant.status().verifiedInferenceCalls, 1);
+
+  const missing = await connected(t, { responses: () => new Response(null, { status: 204, headers: { 'Content-Type': 'text/event-stream' } }) });
+  await missing.connection.selectModel(MODEL);
+  const blocked = new ChatGPTPlanAssistant({ connection: missing.connection, maxCalls: 1 });
+  await assert.rejects(blocked.assess(SAMPLE), error => error.code === 'STREAM_INVALID' && error.providerDiagnostic.httpStatus === 204 && error.providerDiagnostic.contentTypeCategory === 'text/event-stream');
+  assert.equal(blocked.status().verifiedInferenceCalls, 0);
+});
+
 test('returned canonical model metadata is preserved without claiming alias equivalence', async t => {
   const returnedModel = `${MODEL}-2026-10-09`;
   const { connection } = await connected(t, { responses: () => stream({ model: returnedModel }) });

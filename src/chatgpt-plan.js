@@ -389,8 +389,24 @@ export class ChatGPTPlanConnection {
   async close() { this.closing = true; try { await this.cancelSignIn(); } finally { for (const controller of this.controllers.keys()) controller.abort(); await Promise.allSettled(this.refreshes.values()); await this.mutations; await this.store.close(); } }
 }
 
+function streamDiagnostic(response) {
+  const rawType = response.headers.get('content-type');
+  const mediaType = typeof rawType === 'string' ? rawType.split(';', 1)[0].trim().toLowerCase() : '';
+  const contentTypeCategory = !rawType?.trim() ? 'missing'
+    : mediaType === 'application/json' || mediaType === 'text/event-stream' ? mediaType : 'other';
+  const httpStatus = Number.isInteger(response.status) && response.status >= 100 && response.status <= 599 ? response.status : null;
+  return { httpStatus, contentTypeCategory };
+}
+
 async function completedText(response, requestedModel) {
-  if (!response.headers.get('content-type')?.includes('text/event-stream') || !response.body) throw problem('ChatGPT did not return the required response stream.', 502, 'STREAM_INVALID');
+  const diagnostic = streamDiagnostic(response);
+  if (diagnostic.contentTypeCategory !== 'text/event-stream' || !response.body) {
+    // Do not read an unexpected body or expose header parameters/status text.
+    await response.body?.cancel().catch(() => {});
+    const error = problem(`ChatGPT did not return the required response stream (provider HTTP ${diagnostic.httpStatus ?? 'unavailable'}; content type: ${diagnostic.contentTypeCategory}). No assessment was accepted.`, 502, 'STREAM_INVALID');
+    error.providerDiagnostic = diagnostic;
+    throw error;
+  }
   const reader = response.body.getReader(); const decoder = new TextDecoder();
   let bytes = 0; let pending = ''; let data = []; let deltaText = ''; let completed = null;
   const dispatch = () => {
