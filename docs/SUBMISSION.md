@@ -52,7 +52,9 @@ PayPal is intended to be central to the completed flow: the reviewed extra work 
 
 **Recovering from uncertain invoice creation.** A status lookup can fail after PayPal has created an invoice. The workflow retains a known invoice ID and rechecks its status and amount without creating a second invoice. If creation may have succeeded but no ID is known, another automatic creation POST is blocked so the operator can check the sandbox dashboard. Tests cover failed lookups, mismatched amounts, recipient changes, stable request IDs, and uncertain creation outcomes. A request ID is not treated as proof that the Invoicing API guarantees deduplication.
 
-**Reporting provider failure accurately.** AI failures are shown as errors and do not silently become local-rule assessments labelled as AI. Tests check sanitized failures, expired quotes, and rejection of untrusted browser origins. The current workflow suite passes; all provider responses in these tests are stubs.
+**Reporting provider failure accurately.** AI failures are shown as errors and do not silently become local-rule assessments labelled as AI. Tests check sanitized failures, expired quotes, and rejection of untrusted browser origins. The current **59-test local suite passes**; all provider responses in these tests are stubs.
+
+**Bounding the optional Nebius path.** One assessment can run at a time. The default allowance is ten dispatched attempts per server process, including failed requests, timeouts and refused output. Configuration and concurrency refusals do not dispatch or consume a call. Requests have a 25-second deadline, 1,800 output tokens and a streamed 150,000-byte response limit; redirects are refused. Only `finish_reason: stop` with a valid, supplied-clause-grounded assessment is accepted. Restarting resets the allowance, so this is not a guaranteed billing cap. The `nebiusStatus` object in `GET /api/config` returns only configured state, attempt count, call limit, calls remaining and in-flight state, with no credentials.
 
 ## What the implementation taught us
 

@@ -21,6 +21,12 @@ export async function startServer({port=4185,assistant=new ScopeAssistant(),payp
   const localAssistant=new ScopeAssistant();
   const planAssistant=planConnection?new ChatGPTPlanAssistant({connection:planConnection}):null;
   const planStatus=()=>planAssistant?{available:true,...planAssistant.status()}:{available:false,connected:false,explanation:planInitializationError||'ChatGPT plan connection is unavailable in this server.'};
+  const nebiusStatus=()=>{
+    if(typeof assistant.status!=='function')return null;
+    const status=assistant.status();const count=value=>Number.isInteger(value)&&value>=0?value:null;
+    // Whitelist budget fields; never spread provider configuration or credentials.
+    return {configured:Boolean(assistant.configured??assistant.key),attemptedCalls:count(status?.attemptedCalls),callLimit:count(status?.callLimit),callsRemaining:count(status?.callsRemaining),inFlight:status?.inFlight===true};
+  };
   const server=http.createServer(async(request,response)=>{
     const send=(status,data,type='application/json')=>{response.writeHead(status,{'Content-Type':`${type}; charset=utf-8`,'X-Content-Type-Options':'nosniff','Cache-Control':'no-store','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'"});response.end(Buffer.isBuffer(data)?data:JSON.stringify(data));};
     try{
@@ -28,7 +34,7 @@ export async function startServer({port=4185,assistant=new ScopeAssistant(),payp
       if(!allowed.includes(request.headers.host)||request.headers.origin&&!allowed.some(host=>request.headers.origin===`http://${host}`))throw new Problem('Untrusted origin or host.',403);
       const path=new URL(request.url,`http://${allowed[0]}`).pathname;
       if(request.method==='GET'&&STATIC[path]){const[file,type]=STATIC[path];return send(200,await readFile(resolve(ROOT,'public',file)),type);}
-      if(request.method==='GET'&&path==='/api/config')return send(200,{scope:SCOPE,sample:SAMPLE,aiConfigured:Boolean(assistant.configured??assistant.key),nebiusConfigured:Boolean(assistant.configured??assistant.key),chatgptPlan:planStatus(),paypalConfigured:paypal.configured,provider:'Local rules available · choose a source before assessing',paymentMode:'Sandbox only · no invoice sending or live payments'});
+      if(request.method==='GET'&&path==='/api/config')return send(200,{scope:SCOPE,sample:SAMPLE,aiConfigured:Boolean(assistant.configured??assistant.key),nebiusConfigured:Boolean(assistant.configured??assistant.key),nebiusStatus:nebiusStatus(),chatgptPlan:planStatus(),paypalConfigured:paypal.configured,provider:'Local rules available · choose a source before assessing',paymentMode:'Sandbox only · no invoice sending or live payments'});
       if(request.method==='GET'&&path==='/api/chatgpt/status')return send(200,planStatus());
       if(request.method==='GET'&&path==='/api/chatgpt/models'){
         if(!planConnection)throw new Problem('ChatGPT plan connection is unavailable in this server.',503);
