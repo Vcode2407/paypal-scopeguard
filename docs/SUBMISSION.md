@@ -1,6 +1,6 @@
 # ScopeGuard — Devpost submission draft
 
-**Status:** Working local prototype. Live AI inference and real PayPal sandbox invoice creation have not been verified. This document is a draft; the project has not been submitted.
+**Status:** Working local prototype. Actual ChatGPT consent, connection and model discovery were verified on October 11, 2026. One authorized inference attempt failed with `STREAM_INVALID`; zero live assessments were accepted. Meaningful AI output and real PayPal sandbox invoice creation remain unverified. This document is a draft; the project has not been submitted.
 
 ## Project name and tagline
 
@@ -52,9 +52,13 @@ PayPal is intended to be central to the completed flow: the reviewed extra work 
 
 **Recovering from uncertain invoice creation.** A status lookup can fail after PayPal has created an invoice. The workflow retains a known invoice ID and rechecks its status and amount without creating a second invoice. If creation may have succeeded but no ID is known, another automatic creation POST is blocked so the operator can check the sandbox dashboard. Tests cover failed lookups, mismatched amounts, recipient changes, stable request IDs, and uncertain creation outcomes. A request ID is not treated as proof that the Invoicing API guarantees deduplication.
 
-**Reporting provider failure accurately.** AI failures are shown as errors and do not silently become local-rule assessments labelled as AI. Tests check sanitized failures, expired quotes, and rejection of untrusted browser origins. The current **59-test local suite passes**; all provider responses in these tests are stubs.
+**Reporting provider failure accurately.** AI failures are shown as errors and do not silently become local-rule assessments labelled as AI. Tests check sanitized failures, expired quotes, and rejection of untrusted browser origins. The current **63-test local suite passes**; all provider responses in these tests are stubs.
 
 **Bounding the optional Nebius path.** One assessment can run at a time. The default allowance is ten dispatched attempts per server process, including failed requests, timeouts and refused output. Configuration and concurrency refusals do not dispatch or consume a call. Requests have a 25-second deadline, 1,800 output tokens and a streamed 150,000-byte response limit; redirects are refused. Only `finish_reason: stop` with a valid, supplied-clause-grounded assessment is accepted. Restarting resets the allowance, so this is not a guaranteed billing cap. The `nebiusStatus` object in `GET /api/config` returns only configured state, attempt count, call limit, calls remaining and in-flight state, with no credentials.
+
+**Separating catalog and inference limits.** ChatGPT model discovery allows at most 1 MiB (1,048,576 streamed bytes) and 500 entries, returning only valid visible model IDs/display names in their original order. Oversized streams are cancelled, and refused responses preserve the previous verified catalog. Loading or selecting a model does not dispatch inference. Authentication JSON stays capped at 64,000 bytes and inference streams at 96,000 bytes; the existing 20-second inference deadline is unchanged. The catalog regressions use injected responses and establish no actual account or runtime AI access.
+
+**Diagnosing unexpected inference responses.** The backend cancels an unexpected body without reading it and reports only a bounded HTTP status plus a fixed content-type category. Raw bodies, header parameters and status text are excluded. Acceptance still requires a completed, grounded SSE assessment; diagnostics do not add retries or fallback. This change was made after the first failed real attempt, whose status, type and cause were not captured.
 
 ## What the implementation taught us
 
@@ -64,7 +68,7 @@ A useful scope assistant needs more than a classification. The reviewer needs th
 
 - **Default runtime:** Local rules; no AI model request and no PayPal connection.
 - **Implemented optional runtime AI adapter:** Nebius Token Factory, requiring a valid `NEBIUS_API_KEY` and an explicit model available to that account. Actual model access, inference quality, and an end-to-end run remain unverified.
-- **Implemented optional Sign in with ChatGPT path:** Eligible plans can power the local app after the user completes their own sign-in, grants plan-use permission, and selects a model from the account's returned catalogue. Private backend storage, callback validation and the inference path are locally tested with provider stubs. Public authorization metadata was checked, but no actual user consent or plan inference has been verified. Judge setup still needs a real run. Requested and returned model identities are recorded separately.
+- **Implemented optional Sign in with ChatGPT path:** Private backend storage, callback validation and inference are locally tested with provider stubs. On October 11, 2026, the owner completed actual consent, the app verified connection and plan sharing, and authenticated discovery displayed three models. `gpt-6-luna` was selected for exactly one authorized fictional request; it failed with `STREAM_INVALID`, leaving one attempt and zero accepted assessments. HTTP status, content type and underlying cause were not captured. [Sanitized connection/failure proof](evidence/chatgpt-connection-check-2026-10-11.json). The check created no assessment export and made no PayPal actions. Requested and returned model identities will be recorded separately for an accepted result; no returned model or output is claimed for this failed attempt. A further diagnostic attempt requires a separate explicit owner decision and can consume plan allowance.
 - **PayPal:** Sandbox Invoicing adapter implemented and tested with stubs. No real sandbox invoice or sandbox payment has been verified.
 - **Development assistance:** Codex assisted development. Confirm any model/version and other development-tool details requested by the final submission form. Development assistance is separate from the runtime AI demonstration still to complete.
 
@@ -98,10 +102,10 @@ Record the AI and PayPal portions only after real integration verification. Unti
 | Public YouTube video | **Pending URL.** Target duration: 2:40. |
 | Local prototype walkthrough | [Actual silent recording, 2:17](videos/local-walkthrough.mp4). Local rules, no live AI or PayPal. [Disclosure/written walkthrough](LOCAL_DEMO.md). The original screen footage and recording captions remain; its audio track has been removed. This is separate from the final required YouTube demonstration. |
 | Screenshots | [Actual local quote preview](images/local-quote.png). Live AI and actual sandbox invoice screenshots remain pending. |
-| Runtime AI evidence | **Pending.** Record actual provider, model, request example, and observed output. |
+| Runtime AI evidence | **Pending accepted result.** [Actual connection and one failed-attempt proof](evidence/chatgpt-connection-check-2026-10-11.json) records no accepted output. Retain actual provider, requested/returned model, request example and grounded observed output after a successful authorized run. |
 | PayPal evidence | **Pending.** Record the actual sandbox invoice, matching amount, and refreshed invoice status. A manually completed sandbox payment can add optional lifecycle evidence. |
 | Entrant / team details | **Pending human completion.** Confirm names, roles, eligibility, and required declarations. |
-| Devpost project / submission URL | **Pending.** No submitted entry is claimed. |
+| Devpost project / submission URL | [Saved ScopeGuard draft](https://devpost.com/software/scopeguard-lmpvyf), **2/5 steps**. Story and public source are saved; final video, additional information and submission remain pending. |
 
 ## Setup and submission readiness
 

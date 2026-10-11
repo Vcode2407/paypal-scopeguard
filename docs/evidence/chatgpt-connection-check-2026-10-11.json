@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-10-11T18:01:22.2991611Z",
+  "source": "ScopeGuard local UI and read-only status",
+  "sourceCommit": "703d347625f0599511e1781761d868bab25de916",
+  "connected": true,
+  "planSharingGranted": true,
+  "catalogLoadingVerified": true,
+  "selectedModel": "gpt-6-luna",
+  "before": {
+    "attemptedCalls": 0,
+    "verifiedInferenceCalls": 0
+  },
+  "after": {
+    "attemptedCalls": 1,
+    "verifiedInferenceCalls": 0
+  },
+  "liveAssessmentAccepted": false,
+  "failureCode": "STREAM_INVALID",
+  "uiMessage": "ChatGPT did not return the required response stream.",
+  "providerHttpStatusCaptured": false,
+  "providerContentTypeCaptured": false,
+  "automaticRetries": 0,
+  "paypalActionsByThisCheck": 0,
+  "assessmentExportCreated": false
+}
