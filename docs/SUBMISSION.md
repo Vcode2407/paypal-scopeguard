@@ -22,7 +22,7 @@ The current default uses local rules. The sample FAQ page and booking integratio
 
 Prices come from the operator's estimated hours and hourly rate. Four hours for the FAQ page plus six hours for the booking integration at $50/hour produce a $500 preview. The model does not choose prices. The operator explicitly approves the exact preview before the backend permits invoice creation. This records local review; it does not capture authenticated client consent to a written change order.
 
-The PayPal adapter is implemented for sandbox draft creation and status reconciliation. With appropriate sandbox credentials, it obtains an OAuth token, creates an itemized invoice, reads its details, and checks that its USD amount matches the approved quote. The application does not send invoices or execute payments. Sending and paying would be demonstrated manually in the sandbox accounts, followed by a status refresh in ScopeGuard.
+The PayPal adapter is implemented for sandbox draft creation and status reconciliation. With appropriate sandbox credentials, it obtains an OAuth token, creates an itemized invoice, reads its details, and checks that its USD amount matches the approved quote. The application does not send invoices or execute payments. For an optional stronger payment-lifecycle demonstration, the owner would send and pay manually in the sandbox accounts, then refresh the actual returned status in ScopeGuard.
 
 The browser can export the fictional scope, assessment, and quote as JSON. After an invoice response, the quote includes its latest returned status and verified amount. Failed or mismatched refreshes retain the known invoice ID with `STATUS_UNVERIFIED` and remove the previous amount. Current assessments and quotes live in memory and expire; restarting the server clears them.
 
@@ -70,7 +70,7 @@ A useful scope assistant needs more than a classification. The reviewer needs th
 
 ## What is next
 
-First, verify a meaningful runtime AI assessment on actual requests and record the provider and model used. Then create a real PayPal sandbox invoice, compare its amount with the approved quote, manually exercise the sandbox payment lifecycle, and refresh the returned status.
+First, verify a meaningful runtime AI assessment on actual requests and record the provider and model used. Then create a real PayPal sandbox invoice, compare its amount with the approved quote, and refresh the returned invoice status. Manually sending and paying in the sandbox can provide stronger lifecycle evidence; the [official rules](https://paypalaihackathon.devpost.com/rules) require central PayPal sandbox integration alongside AI and do not specify a completed payment as an entry condition.
 
 The [MIT-licensed repository is public](https://github.com/Vcode2407/paypal-scopeguard). Before submission, complete live integration verification, finalize free judge access, and record the verified workflow. The [local judge walkthrough](JUDGES.md) is available now. Later product work would add editable agreements, durable invoice recovery records, revision-history tracking, and a separate client approval experience.
 
@@ -83,7 +83,7 @@ Record the AI and PayPal portions only after real integration verification. Unti
 | 0:00–0:20 | Show the fictional landing-page agreement and the three client requests. Explain the freelancer's decision about additional work. |
 | 0:20–1:00 | Run the verified AI assessment, display the actual provider/model, and inspect the clauses. Explain why the colour edit is included while the FAQ page and booking integration are extra-work suggestions. |
 | 1:00–1:35 | Review the selected estimates and $50 hourly rate. Show the $500 preview, then approve that exact quote locally. |
-| 1:35–2:20 | Create the real sandbox draft and show its returned ID, status, and verified amount. Show the manually completed sandbox payment step, then refresh the actual status in ScopeGuard. |
+| 1:35–2:20 | Create the real sandbox draft and show its returned ID, status, and verified amount. Refresh the actual invoice status. If the optional manual sandbox payment has been completed, show its actual returned status; otherwise keep the draft/status demonstration accurate. |
 | 2:20–2:40 | Export the scope/assessment/quote JSON. State the current limits and the next product step. |
 
 ## Devpost fields and links to complete
@@ -99,7 +99,7 @@ Record the AI and PayPal portions only after real integration verification. Unti
 | Local prototype walkthrough | [Actual silent recording, 2:17](videos/local-walkthrough.mp4). Local rules, no live AI or PayPal. [Disclosure/written walkthrough](LOCAL_DEMO.md). The original screen footage and recording captions remain; its audio track has been removed. This is separate from the final required YouTube demonstration. |
 | Screenshots | [Actual local quote preview](images/local-quote.png). Live AI and actual sandbox invoice screenshots remain pending. |
 | Runtime AI evidence | **Pending.** Record actual provider, model, request example, and observed output. |
-| PayPal evidence | **Pending.** Record the actual sandbox invoice, matching amount, and refreshed payment status. |
+| PayPal evidence | **Pending.** Record the actual sandbox invoice, matching amount, and refreshed invoice status. A manually completed sandbox payment can add optional lifecycle evidence. |
 | Entrant / team details | **Pending human completion.** Confirm names, roles, eligibility, and required declarations. |
 | Devpost project / submission URL | **Pending.** No submitted entry is claimed. |
 
@@ -107,6 +107,6 @@ Record the AI and PayPal portions only after real integration verification. Unti
 
 From the repository root, install pinned dependencies with `npm ci`, start with `npm start`, and open `http://127.0.0.1:4185`. Run `npm test` and `npm run check`. The [README](../README.md) describes the local sample, optional ChatGPT sign-in, and Nebius/PayPal configuration. Sponsor API credentials belong in the ignored `.env` file; ChatGPT sign-in credentials stay in the app's protected ignored store.
 
-The event requires meaningful integration with PayPal's free sandbox and an AI tool/model/platform. It accepts a working hosted demo or complete local run instructions, requires public open-source code, English materials, and a public YouTube demonstration under three minutes. Deadline: **November 13, 2026, 01:30 IST** (November 12, noon PST). Arrange unrestricted, free judge access through the judging period ending **December 15, 2026**. [Official rules](https://paypalaihackathon.devpost.com/rules)
+The event requires meaningful integration with PayPal's free sandbox and an AI tool/model/platform. Public hosting is optional: complete setup and run instructions in the repository can provide access to a working local build, with any necessary testing-access details supplied privately. The event also requires public open-source code, English materials, and a public YouTube demonstration under three minutes. Deadline: **November 13, 2026, 01:30 IST** (November 12, noon PST). Arrange unrestricted, free judge access through the judging period ending **December 15, 2026**. [Official rules](https://paypalaihackathon.devpost.com/rules)
 
 The public repository and local setup are available. The local prototype alone does not establish completion of all requirements. Live AI and PayPal verification, public video, final judge access, and the submission itself remain pending.
