@@ -4,7 +4,7 @@ A freelancer change-order assistant for the **PayPal AI Hackathon**. Compare inc
 
 Public source: [Vcode2407/paypal-scopeguard](https://github.com/Vcode2407/paypal-scopeguard) · [judge walkthrough](docs/JUDGES.md) · [submission draft](docs/SUBMISSION.md).
 
-[Watch the narrated local walkthrough (2:18)](docs/videos/local-walkthrough.mp4). It shows the actual local review flow; [recording disclosure and transcript](docs/LOCAL_DEMO.md) explain the remaining live AI/PayPal steps.
+[Watch the silent local walkthrough (2:17)](docs/videos/local-walkthrough.mp4). It shows the actual local review flow; [recording disclosure and written walkthrough](docs/LOCAL_DEMO.md) explain the remaining live AI/PayPal steps.
 
 ## Run locally
 

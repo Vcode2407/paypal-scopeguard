@@ -76,7 +76,7 @@ The [MIT-licensed repository is public](https://github.com/Vcode2407/paypal-scop
 
 Record the AI and PayPal portions only after real integration verification. Until then, any recording must explicitly identify local rules and stub-only integration validation.
 
-| Time | Footage and narration |
+| Time | Footage and on-screen captions |
 | --- | --- |
 | 0:00–0:20 | Show the fictional landing-page agreement and the three client requests. Explain the freelancer's decision about additional work. |
 | 0:20–1:00 | Run the verified AI assessment, display the actual provider/model, and inspect the clauses. Explain why the colour edit is included while the FAQ page and booking integration are extra-work suggestions. |
@@ -94,7 +94,7 @@ Record the AI and PayPal portions only after real integration verification. Unti
 | Public repository | [Vcode2407/paypal-scopeguard](https://github.com/Vcode2407/paypal-scopeguard), public with MIT license. |
 | Working build / judge instructions | [Account-free local walkthrough](JUDGES.md), starting at `http://127.0.0.1:4185`. Live provider access and final free judge-access arrangement remain pending. |
 | Public YouTube video | **Pending URL.** Target duration: 2:40. |
-| Local prototype walkthrough | [Actual narrated recording, 2:18](videos/local-walkthrough.mp4). Local rules, no live AI or PayPal. [Disclosure/transcript](LOCAL_DEMO.md). This is separate from the final required YouTube demonstration. |
+| Local prototype walkthrough | [Actual silent recording, 2:17](videos/local-walkthrough.mp4). Local rules, no live AI or PayPal. [Disclosure/written walkthrough](LOCAL_DEMO.md). The original screen footage and recording captions remain; its audio track has been removed. This is separate from the final required YouTube demonstration. |
 | Screenshots | [Actual local quote preview](images/local-quote.png). Live AI and actual sandbox invoice screenshots remain pending. |
 | Runtime AI evidence | **Pending.** Record actual provider, model, request example, and observed output. |
 | PayPal evidence | **Pending.** Record the actual sandbox invoice, matching amount, and refreshed payment status. |

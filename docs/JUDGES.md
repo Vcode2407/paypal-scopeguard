@@ -2,7 +2,7 @@
 
 ScopeGuard is a local, MIT-licensed application. Its fictional sample and deterministic quote workflow run without an account or API key. Optional live AI and PayPal sandbox flows need separate account-owner setup. A successful local demo does not establish those integrations have run.
 
-The [narrated local walkthrough](videos/local-walkthrough.mp4) takes 2:18. [Its disclosure and transcript](LOCAL_DEMO.md) identify exactly what was recorded and the live integrations still pending.
+The [silent local walkthrough](videos/local-walkthrough.mp4) takes 2:17. [Its disclosure and written walkthrough](LOCAL_DEMO.md) identify exactly what was recorded and the live integrations still pending. The actual screen footage and recording captions remain unchanged; its audio track has been removed.
 
 ## Reproduce the available workflow
 

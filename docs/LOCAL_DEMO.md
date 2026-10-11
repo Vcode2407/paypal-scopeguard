@@ -1,14 +1,18 @@
 # Recorded local walkthrough
 
-[Watch the narrated walkthrough](videos/local-walkthrough.mp4) · **2 minutes 18 seconds** · English narration.
+The [silent-video verification](videos/silent-video-verification.json) records zero audio streams, the current file hash, a complete decode, and an unchanged encoded video stream.
+
+[Watch the silent walkthrough](videos/local-walkthrough.mp4) · **2 minutes 17 seconds** (136.68 seconds) · English on-screen text and recording captions.
 
 This is an actual isolated-browser recording of ScopeGuard's local workflow, captured October 10, 2026. It shows the fictional agreement, three requests, supplied-clause evidence, the $500 quote, explicit local approval and JSON export. The screenshot in the README comes from the same run.
 
 **No live AI inference or PayPal account request occurred.** The recording starts an isolated application server with external provider traffic explicitly forbidden. It does not reuse the account owner's running server or authentication store. The optional connection is unavailable in this isolated recording; the account owner's prepared connection remains separate.
 
-The narration uses offline Windows speech synthesis. Added recording captions consistently label the footage as local rules with no live AI or PayPal; application data and API responses are unchanged. The exported JSON identifies the local source, a $500 approved quote and no model. The final MP4 was checked for H.264 video, AAC audio and a 137.56-second duration. Four representative frames were inspected for readability and truthful provider/payment labels.
+The audio track has been removed; the actual screen footage and added recording captions remain unchanged. Removing audio also removed a 0.88-second audio-only tail from the original file; all recorded screen footage is retained. Those captions consistently label the footage as local rules with no live AI or PayPal. The exported JSON identifies the local source, a $500 approved quote and no model. Four representative frames were inspected for readability and truthful provider/payment labels.
 
-## Narration
+## Written walkthrough
+
+These descriptions explain the visible flow; the current video has no spoken narration.
 
 1. “ScopeGuard helps freelancers review scope creep before pricing extra work. This recording shows the working local prototype. Local rules are selected. No AI inference or PayPal account request is being made.”
 2. “The fictional landing page agreement includes two revision rounds. Additional pages and third party integrations need a separate estimate. The requests ask for an FAQ page, a booking integration, and a headline colour edit.”

@@ -1,0 +1,24 @@
+{
+  "video": "local-walkthrough.mp4",
+  "verifiedAt": "2026-10-11T07:50:59.231325+00:00",
+  "operation": "Removed all audio tracks and optional container metadata; copied the complete encoded video stream without re-encoding.",
+  "durationSeconds": 136.68,
+  "bytes": 2770680,
+  "sha256": "42c29157d564502fa0a70ef2d48cca34797907af5e8090c3425bb7015a80196f",
+  "audioStreamCount": 0,
+  "streamTypes": [
+    "video"
+  ],
+  "videoCodec": "h264",
+  "videoWidth": 1440,
+  "videoHeight": 960,
+  "videoPacketCount": 3417,
+  "videoPayloadSha256": "42c6df6b1eb0392bb3fc8a8784f2fc44cdce32dd4c779b115324e0c5f50392dc",
+  "codecConfigurationSha256": "642268b37ab365e6367c14d33ac0bdd148485018ffd1f733894722628defb894",
+  "originalFileSha256": "dddd0f31fee7c45fbf7bafb04bf678fc8ae68b712c383122ff47757252b4decb",
+  "originalVideoDurationSeconds": 136.68,
+  "encodedVideoUnchanged": true,
+  "removedAudioOnlyTailSeconds": 0.875011,
+  "fullVideoDecodePassed": true,
+  "disclosure": "Actual application footage, captions and provider-status labels are unchanged. This edit does not change software authoring, integration provenance, or submission readiness."
+}
