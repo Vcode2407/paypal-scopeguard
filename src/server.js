@@ -9,7 +9,14 @@ import {ScopeAssistant,PayPalSandbox} from './providers.js';
 import {ChatGPTPlanConnection,ChatGPTPlanAssistant} from './chatgpt-plan.js';
 const ROOT=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const STATIC={'/':['index.html','text/html'],'/style.css':['style.css','text/css'],'/app.js':['app.js','text/javascript'],'/favicon.ico':['favicon.svg','image/svg+xml']};
-async function body(request){if(!request.headers['content-type']?.startsWith('application/json'))throw new Problem('Use application/json.',415);let raw='';for await(const chunk of request){raw+=chunk;if(raw.length>24000)throw new Problem('Request is too large.',413);}try{const data=JSON.parse(raw);if(!data||typeof data!=='object'||Array.isArray(data))throw Error();return data;}catch{throw new Problem('Provide a JSON object.');}}
+async function body(request){
+  if(!request.headers['content-type']?.startsWith('application/json'))throw new Problem('Use application/json.',415);
+  const chunks=[];let bytes=0;
+  for await(const chunk of request){bytes+=chunk.length;if(bytes>24000)throw new Problem('Request is too large.',413);chunks.push(chunk);}
+  // A UTF-8 character may span network chunks. Decode once after enforcing
+  // the byte limit so the request and its scope evidence remain unchanged.
+  try{const data=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks)));if(!data||typeof data!=='object'||Array.isArray(data))throw Error();return data;}catch{throw new Problem('Provide a JSON object encoded as valid UTF-8.');}
+}
 export async function startServer({port=4185,assistant=new ScopeAssistant(),paypal=new PayPalSandbox(),workflow=new Workflow(),planConnection=null,planInitializationError=null}={}){
   const localAssistant=new ScopeAssistant();
   const planAssistant=planConnection?new ChatGPTPlanAssistant({connection:planConnection}):null;
@@ -75,7 +82,8 @@ export async function startServer({port=4185,assistant=new ScopeAssistant(),payp
       }
       if(path==='/api/invoice-status'){
         const quote=workflow.quote(data.quoteId);if(!quote.invoice)throw new Problem('Create a sandbox draft invoice first.',409);
-        const details=verifyInvoiceTotal(quote,await paypal.details(quote.invoice.id));quote.invoice=details;return send(200,details);
+        try{const details=verifyInvoiceTotal(quote,await paypal.details(quote.invoice.id));quote.invoice=details;return send(200,details);}
+        catch(error){quote.invoice={id:quote.invoice.id,status:'STATUS_UNVERIFIED',source:'PayPal sandbox'};error.invoice=quote.invoice;throw error;}
       }
       throw new Problem('Not found.',404);
     }catch(error){send(error instanceof Problem?error.status:500,{error:error instanceof Problem?error.message:'The request could not finish.',...(error.invoice?{invoice:error.invoice}:{})});}

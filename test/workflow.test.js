@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {request as httpRequest} from 'node:http';
 import {startServer} from '../src/server.js';
 import {Workflow,SAMPLE,SCOPE,validateRequests,groundAssessment,offlineAssess,invoicePayload,Problem,verifyInvoiceTotal} from '../src/domain.js';
 import {ScopeAssistant,PayPalSandbox,PAYPAL_BASE} from '../src/providers.js';
@@ -66,4 +67,58 @@ test('unknown creation outcome blocks another POST while a known invoice survive
 test('expired quotes and untrusted origins cannot advance the workflow',async t=>{
   let now=100000;const workflow=new Workflow({clock:()=>now});const app=await fixture(t,{workflow});assert.equal((await post(app,'/api/assess',{requests:SAMPLE},'https://evil.example.test')).status,403);
   const assessment=(await post(app,'/api/assess',{requests:SAMPLE})).data;const quote=(await post(app,'/api/quote',{assessmentId:assessment.id,selectedIds:['R1'],rateCents:5000})).data;now+=1800001;assert.equal((await post(app,'/api/approve',{quoteId:quote.id,fingerprint:quote.fingerprint})).status,409);
+});
+
+test('a failed or mismatched invoice refresh removes stale verification without creating another invoice',async t=>{
+  let creates=0,reads=0;
+  const paypal={configured:true,async createDraft(){creates++;return {id:'INV2-REFRESH',status:'STATUS_UNVERIFIED',source:'PayPal sandbox'};},async details(id){reads++;if(reads===2)throw new Problem('synthetic status outage',502);return {id,status:'DRAFT',amount:{currency_code:'USD',value:reads===4?'999.00':'200.00'},source:'PayPal sandbox'};}};
+  const workflow=new Workflow();const app=await fixture(t,{paypal,workflow});
+  const assessment=(await post(app,'/api/assess',{aiMode:'local',requests:SAMPLE})).data;
+  const quote=(await post(app,'/api/quote',{assessmentId:assessment.id,selectedIds:['R1'],rateCents:5000})).data;
+  await post(app,'/api/approve',{quoteId:quote.id,fingerprint:quote.fingerprint});
+  assert.equal((await post(app,'/api/invoice',{quoteId:quote.id,sandboxBuyerEmail:'fictional@example.invalid'})).data.status,'DRAFT');
+  for(const expected of [502,200,502,200]){
+    const refreshed=await post(app,'/api/invoice-status',{quoteId:quote.id});
+    assert.equal(refreshed.status,expected);
+    if(expected===502){
+      assert.deepEqual(refreshed.data.invoice,{id:'INV2-REFRESH',status:'STATUS_UNVERIFIED',source:'PayPal sandbox'});
+      assert.deepEqual(workflow.quote(quote.id).invoice,refreshed.data.invoice);
+    }else{
+      assert.equal(refreshed.data.status,'DRAFT');assert.equal(refreshed.data.amount.value,'200.00');
+    }
+  }
+  assert.equal(creates,1);assert.equal(reads,5);
+});
+
+test('UTF-8 request text survives transport boundaries and request limits count bytes',async t=>{
+  let providerCalls=0;
+  const app=await fixture(t,{assistant:{configured:true,async assess(){providerCalls++;throw new Error('External provider must not run');}}});
+  const title='Add separate café page';
+  const encoded=Buffer.from(JSON.stringify({aiMode:'local',requests:[{...SAMPLE[0],title}]}));
+  const split=encoded.indexOf(Buffer.from('é'))+1;
+  const result=await new Promise((resolve,reject)=>{
+    const request=httpRequest(app.url+'/api/assess',{method:'POST',headers:{'Content-Type':'application/json'}},response=>{
+      let raw='';response.setEncoding('utf8');response.on('data',chunk=>raw+=chunk);response.on('end',()=>resolve({status:response.statusCode,data:JSON.parse(raw)}));
+    });
+    request.on('error',reject);
+    // Send the rest only after the server has received the first partial UTF-8
+    // sequence, making the transport boundary deterministic without sleeps.
+    app.server.once('request',incoming=>incoming.once('data',()=>request.end(encoded.subarray(split))));
+    request.write(encoded.subarray(0,split));
+  });
+  assert.equal(result.status,200);assert.equal(result.data.items[0].title,title);
+  const malformed=Buffer.from(JSON.stringify({aiMode:'nebius',requests:[{...SAMPLE[0],title}]}));
+  malformed[malformed.indexOf(Buffer.from('é'))]=0xff;
+  const rejected=await new Promise((resolve,reject)=>{
+    const request=httpRequest(app.url+'/api/assess',{method:'POST',headers:{'Content-Type':'application/json'}},response=>{
+      let raw='';response.setEncoding('utf8');response.on('data',chunk=>raw+=chunk);response.on('end',()=>resolve({status:response.statusCode,data:JSON.parse(raw)}));
+    });
+    request.on('error',reject);request.end(malformed);
+  });
+  assert.equal(rejected.status,400);assert.equal(providerCalls,0);
+  const literalReplacementTitle='Add separate caf\uFFFD page';
+  const literal=await post(app,'/api/assess',{aiMode:'local',requests:[{...SAMPLE[0],title:literalReplacementTitle}]});
+  assert.equal(literal.status,200);assert.equal(literal.data.items[0].title,literalReplacementTitle);
+  const oversized=await post(app,'/api/assess',{aiMode:'nebius',requests:SAMPLE,padding:'é'.repeat(12000)});
+  assert.equal(oversized.status,413);assert.equal(providerCalls,0);
 });

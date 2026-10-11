@@ -24,7 +24,7 @@ Prices come from the operator's estimated hours and hourly rate. Four hours for 
 
 The PayPal adapter is implemented for sandbox draft creation and status reconciliation. With appropriate sandbox credentials, it obtains an OAuth token, creates an itemized invoice, reads its details, and checks that its USD amount matches the approved quote. The application does not send invoices or execute payments. Sending and paying would be demonstrated manually in the sandbox accounts, followed by a status refresh in ScopeGuard.
 
-The browser can export the fictional scope, assessment, and quote as JSON. Current assessments and quotes live in memory and expire; restarting the server clears them.
+The browser can export the fictional scope, assessment, and quote as JSON. After an invoice response, the quote includes its latest returned status and verified amount. Failed or mismatched refreshes retain the known invoice ID with `STATUS_UNVERIFIED` and remove the previous amount. Current assessments and quotes live in memory and expire; restarting the server clears them.
 
 ## How it is built
 
