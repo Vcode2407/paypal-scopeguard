@@ -134,6 +134,55 @@ test('documented dynamic PKCE connection, account model discovery and completed 
   for (const unsupported of ['max_output_tokens', 'temperature', 'top_p', 'metadata', 'tools', 'previous_response_id', 'conversation']) assert.equal(unsupported in sent, false);
 });
 
+test('detailed account catalog above the previous cap keeps order and exports only selectable model fields', async t => {
+  const models = Array.from({ length: 160 }, (_, index) => ({
+    slug: `account-test-model-${index}`, display_name: `Synthetic account model ${index} — 文`,
+    visibility: index % 3 === 0 ? 'hidden' : 'list',
+    description: 'Synthetic descriptive account-model metadata. '.repeat(30),
+    capabilities: { input: ['text'], output: ['text'], reasoning: true },
+    accountMetadata: 'synthetic-private-catalog-field',
+  }));
+  const bytes = Buffer.byteLength(JSON.stringify({ models }));
+  assert.ok(bytes > 150000 && bytes < 1048576, 'A realistic detailed catalog fits the new catalog-only bound');
+  const { connection, fixture } = await connected(t, { models });
+  const assistant = new ChatGPTPlanAssistant({ connection });
+  const returned = await connection.listModels();
+  assert.deepEqual(returned, models.filter(model => model.visibility === 'list').map(model => ({ slug: model.slug, displayName: model.display_name })));
+  assert.doesNotMatch(JSON.stringify(returned), /description|capabilities|accountMetadata|synthetic-private/);
+  await connection.selectModel(returned[0].slug);
+  assert.equal(assistant.configured, true);
+  assert.equal(assistant.status().attemptedCalls, 0);
+  assert.equal(assistant.status().verifiedInferenceCalls, 0);
+  assert.equal(fixture.apiCalls, 0, 'Loading and selecting a catalog model never dispatches inference');
+  assert.equal(fixture.calls.filter(call => call.endpoint === SIWC.models).length, 1);
+  assertNoCredentials(returned);
+});
+
+test('catalog streaming cancels above one MiB and entry limits preserve the previously verified catalog', async t => {
+  const { connection, fixture } = await connected(t);
+  const prior = await connection.listModels();
+  await connection.selectModel(MODEL);
+  const original = connection.fetch;
+  let reads = 0, cancelled = false;
+  const oversized = new ReadableStream({
+    pull(controller) { reads++; controller.enqueue(new Uint8Array(reads === 1 ? 1048577 : 1)); },
+    cancel() { cancelled = true; },
+  }, { highWaterMark: 0 });
+  connection.fetch = async (url, options) => String(url) === SIWC.models
+    ? new Response(oversized, { headers: { 'Content-Type': 'application/json' } })
+    : original(url, options);
+  await assert.rejects(connection.listModels(), error => error.code === 'PROVIDER_OUTPUT_LIMIT' && !error.message.includes('stub-access'));
+  assert.equal(reads, 1); assert.equal(cancelled, true);
+  assert.deepEqual(await connection.availableModels(), prior);
+  assert.equal(connection.status().selectedModel, MODEL);
+
+  const tooMany = Array.from({ length: 501 }, (_, index) => ({ slug: `model-${index}`, display_name: `Model ${index}`, visibility: 'list' }));
+  connection.fetch = async (url, options) => String(url) === SIWC.models ? json({ models: tooMany }) : original(url, options);
+  await assert.rejects(connection.listModels(), error => error.code === 'MODEL_CATALOG_INVALID');
+  assert.deepEqual(await connection.availableModels(), prior);
+  assert.equal(fixture.apiCalls, 0);
+});
+
 test('wrong state cannot consume sign-in; reuse and concurrent exchange are blocked', async t => {
   let release; const held = new Promise(resolve => { release = resolve; });
   const { connection, fixture } = await setup(t);

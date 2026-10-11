@@ -21,6 +21,9 @@ export const SIWC = Object.freeze({
   scopes: 'openid profile email offline_access resource.invoke chatgpt.tokens.use.direct',
 });
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// Account catalogs include descriptive metadata; keep this bound separate from
+// authentication JSON (64 KB) and completed inference streams (96 KB).
+const MODEL_CATALOG_MAX_BYTES = 1048576;
 const runFile = promisify(execFile);
 const value = (bytes = 32) => randomBytes(bytes).toString('base64url');
 const isText = (input, max = 24000) => typeof input === 'string' && input.length > 0 && input.length <= max;
@@ -344,7 +347,7 @@ export class ChatGPTPlanConnection {
   }
   async listModels() {
     return this.apiRequest(SIWC.models, { method: 'GET' }, async (response, accountId) => {
-      const data = await readJson(response, 150000);
+      const data = await readJson(response, MODEL_CATALOG_MAX_BYTES);
       if (!Array.isArray(data.models) || data.models.length > 500) throw problem('ChatGPT returned an invalid account model catalog.', 502, 'MODEL_CATALOG_INVALID');
       const models = data.models.filter(model => model.visibility === 'list' && validModel(model.slug) && isText(model.display_name, 150)).map(model => ({ slug: model.slug, displayName: model.display_name }));
       if (!models.length || new Set(models.map(model => model.slug)).size !== models.length) throw problem('No selectable models were verified for this ChatGPT account.', 503, 'MODEL_CATALOG_EMPTY');
