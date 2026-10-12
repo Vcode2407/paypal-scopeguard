@@ -96,6 +96,17 @@ async function connected(t, options = {}) {
 function assertNoCredentials(value) {
   assert.doesNotMatch(JSON.stringify(value), /stub-access-|stub-refresh-|idToken|accessToken|refreshToken|eyJ/);
 }
+function assertBasicDiagnostic(diagnostic, httpStatus, contentTypeCategory) {
+  assert.equal(diagnostic.httpStatus, httpStatus); assert.equal(diagnostic.contentTypeCategory, contentTypeCategory);
+  assert.equal(diagnostic.requestKind, 'inference'); assert.equal(diagnostic.responseReceived, true);
+  assert.equal(diagnostic.rejectedBodyDiagnosticsEnabled, false);
+  assert.match(diagnostic.clientRequestId, /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+  assert.ok(Number.isInteger(diagnostic.headersElapsedMs) && diagnostic.headersElapsedMs >= 0);
+  assert.ok(Number.isInteger(diagnostic.elapsedMs) && diagnostic.elapsedMs >= diagnostic.headersElapsedMs);
+  const allowed = new Set(['httpStatus', 'contentTypeCategory', 'clientRequestId', 'requestKind', 'responseReceived',
+    'requestId', 'openaiRequestId', 'headersElapsedMs', 'elapsedMs', 'requestDispatched', 'rejectedBodyDiagnosticsEnabled', 'providerErrorCode', 'providerErrorParam']);
+  assert.ok(Object.keys(diagnostic).every(key => allowed.has(key)));
+}
 
 test('documented dynamic PKCE connection, account model discovery and completed inference', async t => {
   const context = await setup(t, { models: [
@@ -290,8 +301,7 @@ test('unexpected inference bodies cancel before refusal and expose only bounded 
     await assert.rejects(assistant.assess(SAMPLE), error => {
       assert.equal(cancelled, true, 'The unexpected body is cancelled before the error is delivered');
       assert.equal(error.code, 'STREAM_INVALID');
-      assert.deepEqual(error.providerDiagnostic, { httpStatus: scenario.expectedStatus, contentTypeCategory: scenario.expectedType });
-      assert.deepEqual(Object.keys(error.providerDiagnostic).sort(), ['contentTypeCategory', 'httpStatus']);
+      assertBasicDiagnostic(error.providerDiagnostic, scenario.expectedStatus, scenario.expectedType);
       assert.match(error.message, new RegExp(`provider HTTP ${scenario.expectedStatus ?? 'unavailable'}; content type: ${scenario.expectedType}`));
       assert.doesNotMatch(error.message + JSON.stringify(error), /synthetic-private|X-Private-Identity|statusText|stub-access|stub-refresh/);
       return true;
@@ -334,7 +344,7 @@ test('non-OK provider responses retain only status/type and cancel without readi
     await assert.rejects(assistant.assess(SAMPLE), error => {
       assert.equal(error.code, 'PLAN_REQUEST_FAILED');
       assert.equal(error.status, status === 429 ? 503 : 502);
-      assert.deepEqual(error.providerDiagnostic, { httpStatus: status, contentTypeCategory: 'application/json' });
+      assertBasicDiagnostic(error.providerDiagnostic, status, 'application/json');
       assert.match(error.message, new RegExp(`provider HTTP ${status}; content type: application/json`));
       assert.doesNotMatch(error.message + JSON.stringify(error), /synthetic-private|X-Request-ID|statusText|stub-access|stub-refresh/);
       return true;
@@ -389,7 +399,7 @@ test('malformed SSE events and completion metadata retain safe diagnostics and c
     const assistant = new ChatGPTPlanAssistant({ connection, maxCalls: 1 });
     await assert.rejects(assistant.assess(SAMPLE), error => {
       assert.equal(error.code, scenario.code);
-      assert.deepEqual(error.providerDiagnostic, { httpStatus: 200, contentTypeCategory: 'text/event-stream' });
+      assertBasicDiagnostic(error.providerDiagnostic, 200, 'text/event-stream');
       assert.match(error.message, /provider HTTP 200; content type: text\/event-stream/);
       assert.doesNotMatch(error.message + JSON.stringify(error), /synthetic-private|X-Private-Identity|stub-access|stub-refresh/);
       return true;

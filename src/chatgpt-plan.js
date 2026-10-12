@@ -24,6 +24,22 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // Account catalogs include descriptive metadata; keep this bound separate from
 // authentication JSON (64 KB) and completed inference streams (96 KB).
 const MODEL_CATALOG_MAX_BYTES = 1048576;
+const REJECTED_BODY_MAX_BYTES = 4096;
+const REJECTED_BODY_TIMEOUT_MS = 1000;
+const RESPONSE_DIAGNOSTICS = new WeakMap();
+const ERROR_CODES = new Set([
+  'subscription_sharing_user_not_eligible', 'subscription_sharing_usage_limit_exceeded',
+  'subscription_sharing_usage_unavailable', 'subscription_sharing_unsupported_capability',
+  'subscription_sharing_route_not_supported', 'subscription_sharing_invalid_user',
+  'subscription_sharing_user_unavailable', 'chatpass_v2_scope_not_authorized',
+  'chatpass_v2_invalid_authorization_context',
+]);
+const ERROR_PARAMS = new Set([
+  'model', 'input', 'instructions', 'store', 'stream', 'tools', 'additional_tools', 'service_tier',
+  'background', 'conversation', 'max_output_tokens', 'max_tool_calls', 'metadata', 'moderation',
+  'multi_agent', 'prompt', 'prompt_cache_retention', 'safety_identifier', 'temperature',
+  'top_logprobs', 'top_p', 'truncation', 'user', 'previous_response_id',
+]);
 const runFile = promisify(execFile);
 const value = (bytes = 32) => randomBytes(bytes).toString('base64url');
 const isText = (input, max = 24000) => typeof input === 'string' && input.length > 0 && input.length <= max;
@@ -168,6 +184,7 @@ async function readJson(response, limit) {
 
 /** OSS/local SIWC public client. Constructing/loading it performs no OAuth/inference call. */
 export class ChatGPTPlanConnection {
+  #lastRequestDiagnostic = null;
   static async create(options = {}) {
     const connection = new ChatGPTPlanConnection(options);
     await connection.initialize(); return connection;
@@ -219,6 +236,7 @@ export class ChatGPTPlanConnection {
       selectedModel: active?.selectedModel || null, activeAccountId: active?.clientId || null,
       accounts: (this.record?.accounts || []).map(account => ({ accountId: account.clientId, label: account.identity ? `${account.identity.email || 'ChatGPT account'} · ${account.clientId.slice(-8)}` : `Registration ${account.clientId.slice(-8)} · sign-in needed`, validated: Boolean(account.identity), connected: Boolean(!this.closing && !this.storageError && account.identity && account.credentials && !this.blocked.has(account.clientId)) })),
       signInPending: Boolean(this.pending), lastSignInError: this.lastSignInError,
+      lastRequestDiagnostic: this.#lastRequestDiagnostic && structuredClone(this.#lastRequestDiagnostic),
       explanation: this.storageError?.message || (sharing ? 'A validated ChatGPT connection granted plan permission. A completed inference still needs verification.' : connected ? 'Identity is connected; ChatGPT plan permission was not granted.' : 'Optional local sign-in is prepared. No ChatGPT account is connected.'),
     };
   }
@@ -330,23 +348,40 @@ export class ChatGPTPlanConnection {
     if (this.active()?.clientId !== account.clientId || !this.status().sharing) throw problem('The selected ChatGPT account changed. Retry with the active account.', 409);
     return { token: this.active().credentials.accessToken, accountId: account.clientId };
   }
-  async apiRequest(endpoint, options, consume, timeoutMs = 20000, onDispatch = () => {}) {
+  async apiRequest(endpoint, options, consume, timeoutMs = 20000, onDispatch = () => {}, diagnosticRejectedResponses = false) {
     if (![SIWC.models, SIWC.responses].includes(endpoint)) throw problem('Unsupported ChatGPT plan endpoint.', 400);
     const { token, accountId } = await this.accessToken();
     const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const context = { clientRequestId: randomUUID(), requestKind: endpoint === SIWC.responses ? 'inference' : 'catalog', started: performance.now(), headersElapsedMs: null, requestDispatched: false, diagnosticRejectedResponses: endpoint === SIWC.responses && diagnosticRejectedResponses === true };
+    let response;
     this.controllers.set(controller, accountId);
     try {
       onDispatch(accountId);
-      const response = await this.fetch(endpoint, { ...options, headers: { ...options.headers, Authorization: `Bearer ${token}` }, redirect: 'error', signal: controller.signal });
+      this.#lastRequestDiagnostic = null;
+      context.requestDispatched = true;
+      response = await this.fetch(endpoint, { ...options, headers: { ...options.headers, Authorization: `Bearer ${token}`, 'X-Client-Request-Id': context.clientRequestId }, redirect: 'error', signal: controller.signal });
+      context.headersElapsedMs = boundedMilliseconds(performance.now() - context.started);
+      RESPONSE_DIAGNOSTICS.set(response, context);
       if (!response.ok) {
         const diagnostic = streamDiagnostic(response);
-        await response.body?.cancel().catch(() => {});
+        if (context.diagnosticRejectedResponses) Object.assign(diagnostic, await rejectedBodyDiagnostic(response));
+        else await response.body?.cancel().catch(() => {});
         throw providerProblem(response.status === 429 ? 'ChatGPT plan usage is unavailable or limited. Check app usage in ChatGPT settings.' : 'ChatGPT plan request was refused. Check the connection and selected account.', diagnostic, response.status === 429 ? 503 : 502, 'PLAN_REQUEST_FAILED');
       }
       const result = await consume(response, accountId);
       if (controller.signal.aborted || this.active()?.clientId !== accountId || this.blocked.has(accountId)) throw problem('The ChatGPT account changed or disconnected during this request. No result was accepted.', 409);
+      this.#lastRequestDiagnostic = streamDiagnostic(response);
       return result;
-    } catch (error) { if (error instanceof Problem) throw error; throw problem(controller.signal.aborted ? 'ChatGPT plan request was interrupted or exceeded 20 seconds. No assessment was accepted.' : 'ChatGPT plan request failed. No assessment was accepted.', 502, 'PLAN_REQUEST_FAILED'); }
+    } catch (error) {
+      const interrupted = controller.signal.aborted;
+      controller.abort();
+      const diagnostic = error instanceof Problem && error.providerDiagnostic
+        ? { ...error.providerDiagnostic, elapsedMs: boundedMilliseconds(performance.now() - context.started) }
+        : streamDiagnostic(response, context);
+      this.#lastRequestDiagnostic = diagnostic;
+      if (error instanceof Problem) { error.providerDiagnostic = diagnostic; throw error; }
+      throw providerProblem(interrupted ? 'ChatGPT plan request was interrupted or exceeded its deadline' : 'ChatGPT plan request failed', diagnostic, 502, 'PLAN_REQUEST_FAILED');
+    }
     finally { clearTimeout(timer); this.controllers.delete(controller); }
   }
   async listModels() {
@@ -393,13 +428,80 @@ export class ChatGPTPlanConnection {
   async close() { this.closing = true; try { await this.cancelSignIn(); } finally { for (const controller of this.controllers.keys()) controller.abort(); await Promise.allSettled(this.refreshes.values()); await this.mutations; await this.store.close(); } }
 }
 
-function streamDiagnostic(response) {
-  const rawType = response.headers.get('content-type');
+const boundedMilliseconds = milliseconds => Number.isFinite(milliseconds) ? Math.min(600000, Math.max(0, Math.round(milliseconds))) : null;
+// Deliberately narrow: unknown header formats are omitted, never echoed. These
+// checks are diagnostic sanitation, not a claim about all provider ID formats.
+const safeRequestId = input => typeof input === 'string' && (/^req_[a-f0-9]{32,64}$/.test(input)
+  || /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(input)) ? input : null;
+function structuredError(error) {
+  if (!error || typeof error !== 'object' || Array.isArray(error)) return { providerErrorCode: null, providerErrorParam: null };
+  return { providerErrorCode: ERROR_CODES.has(error.code) ? error.code : null, providerErrorParam: ERROR_PARAMS.has(error.param) ? error.param : null };
+}
+function streamDiagnostic(response, context = response && RESPONSE_DIAGNOSTICS.get(response)) {
+  const rawType = response?.headers?.get('content-type');
   const mediaType = typeof rawType === 'string' ? rawType.split(';', 1)[0].trim().toLowerCase() : '';
   const contentTypeCategory = !rawType?.trim() ? 'missing'
     : mediaType === 'application/json' || mediaType === 'text/event-stream' ? mediaType : 'other';
-  const httpStatus = Number.isInteger(response.status) && response.status >= 100 && response.status <= 599 ? response.status : null;
-  return { httpStatus, contentTypeCategory };
+  const httpStatus = Number.isInteger(response?.status) && response.status >= 100 && response.status <= 599 ? response.status : null;
+  return { httpStatus, contentTypeCategory, clientRequestId: context?.clientRequestId ?? null,
+    requestKind: context?.requestKind ?? null, requestDispatched: context?.requestDispatched === true, responseReceived: Boolean(response),
+    requestId: safeRequestId(response?.headers?.get('x-request-id')),
+    openaiRequestId: safeRequestId(response?.headers?.get('openai-request-id')),
+    headersElapsedMs: context?.headersElapsedMs ?? null,
+    elapsedMs: context ? boundedMilliseconds(performance.now() - context.started) : null,
+    rejectedBodyDiagnosticsEnabled: context?.diagnosticRejectedResponses === true };
+}
+
+function classifyRejectedPrefix(buffer) {
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buffer).trimStart(); }
+  catch { return { bodyShape: 'unknown', bodySampleStatus: 'invalid_utf8' }; }
+  if (!text.trim()) return { bodyShape: 'empty' };
+  if (/^(?:data:|event:)/.test(text)) return { bodyShape: 'sse_like' };
+  if (/^(?:<!doctype\s+html|<html(?:\s|>))/i.test(text)) return { bodyShape: 'html_like' };
+  let record;
+  try { record = JSON.parse(text); } catch { return { bodyShape: 'unknown' }; }
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return { bodyShape: 'json_other' };
+  if (record.error && typeof record.error === 'object' && !Array.isArray(record.error)) return { bodyShape: 'json_error', ...structuredError(record.error) };
+  if (Object.hasOwn(record, 'detail')) return { bodyShape: 'json_detail' };
+  return { bodyShape: 'json_other' };
+}
+
+async function rejectedBodyDiagnostic(response) {
+  const result = { bodyShape: 'empty', bodySampleStatus: 'complete', sampledBytes: 0, sampleLimitReached: false, providerErrorCode: null, providerErrorParam: null };
+  if (!response.body) return result;
+  // Require a byte/BYOB reader so each read is limited to the remaining4KiB
+  // budget. An ordinary reader could deliver one arbitrarily oversized chunk.
+  // Unsupported readers are cancelled unread, without a fallback read.
+  const buffer = Buffer.alloc(REJECTED_BODY_MAX_BYTES);
+  let reader; let timer; let timedOut = false;
+  const deadline = new Promise((_, reject) => { timer = setTimeout(() => { timedOut = true; reject(Error('diagnostic deadline')); }, REJECTED_BODY_TIMEOUT_MS); });
+  try {
+    try { reader = response.body.getReader({ mode: 'byob' }); }
+    catch { result.bodyShape = 'unknown'; result.bodySampleStatus = 'unsupported_reader'; return result; }
+    while (result.sampledBytes < buffer.length) {
+      const remaining = buffer.length - result.sampledBytes;
+      const { value: chunk, done } = await Promise.race([reader.read(new Uint8Array(remaining)), deadline]);
+      if (chunk?.byteLength > remaining) throw Error('diagnostic byte budget');
+      if (done && !chunk?.byteLength) break;
+      if (!(chunk instanceof Uint8Array)) throw Error('diagnostic bytes');
+      const bytes = chunk.byteLength;
+      buffer.set(chunk, result.sampledBytes); result.sampledBytes += bytes; chunk.fill(0);
+      if (result.sampledBytes === buffer.length) { result.sampleLimitReached = true; result.bodySampleStatus = 'limit_reached'; break; }
+      if (done) break;
+    }
+    Object.assign(result, classifyRejectedPrefix(buffer.subarray(0, result.sampledBytes)));
+  } catch {
+    result.bodyShape = 'unknown'; result.bodySampleStatus = timedOut ? 'timeout' : 'unavailable';
+  } finally {
+    clearTimeout(timer);
+    // Do not let a broken cancellation implementation hold application errors.
+    let cancelTimer;
+    try { await Promise.race([(reader ? reader.cancel() : response.body.cancel()).catch(() => {}), new Promise(resolve => { cancelTimer = setTimeout(resolve, 100); })]); }
+    catch { /* No helper/transport diagnostics or raw bytes leave this function. */ }
+    finally { clearTimeout(cancelTimer); buffer.fill(0); }
+  }
+  return result;
 }
 
 function providerProblem(message, diagnostic, status = 502, code = 'STREAM_INVALID') {
@@ -421,8 +523,10 @@ async function completedText(response, requestedModel) {
   const diagnostic = streamDiagnostic(response);
   const refuse = (message, code = 'STREAM_INVALID') => providerProblem(message, diagnostic, 502, code);
   if (diagnostic.contentTypeCategory !== 'text/event-stream' || !response.body) {
-    // Do not read an unexpected body or expose header parameters/status text.
-    await response.body?.cancel().catch(() => {});
+    // Ordinary assessments cancel unread. An explicitly selected diagnostic
+    // request may classify a bounded prefix; MIME refusal is unchanged.
+    if (diagnostic.rejectedBodyDiagnosticsEnabled) Object.assign(diagnostic, await rejectedBodyDiagnostic(response));
+    else await response.body?.cancel().catch(() => {});
     throw refuse('ChatGPT did not return the required response stream');
   }
   const reader = response.body.getReader(); const decoder = new TextDecoder();
@@ -432,7 +536,10 @@ async function completedText(response, requestedModel) {
     if (raw === '[DONE]') return;
     let event; try { event = JSON.parse(raw); } catch { throw refuse('ChatGPT returned an unreadable stream event.'); }
     if (!event || typeof event !== 'object' || Array.isArray(event) || !isText(event.type, 200)) throw refuse('ChatGPT returned an invalid stream event.');
-    if (['error', 'response.failed', 'response.incomplete'].includes(event.type)) throw refuse('ChatGPT did not complete the assessment. Review plan usage and the connection before deciding whether to retry.', 'INFERENCE_NOT_COMPLETED');
+    if (['error', 'response.failed', 'response.incomplete'].includes(event.type)) {
+      Object.assign(diagnostic, structuredError(event.response?.error ?? event.error ?? event));
+      throw refuse('ChatGPT did not complete the assessment. Review plan usage and the connection before deciding whether to retry.', 'INFERENCE_NOT_COMPLETED');
+    }
     if (event.type === 'response.output_text.delta') { if (!isText(event.delta, 16000)) throw refuse('The assessment text exceeded its limit.', 'PROVIDER_OUTPUT_LIMIT'); deltaText += event.delta; if (deltaText.length > 16000) throw refuse('The assessment text exceeded its limit.', 'PROVIDER_OUTPUT_LIMIT'); }
     if (event.type === 'response.completed') {
       if (completed || event.response?.status !== 'completed' || !validModel(event.response.model)) throw refuse('Completed inference did not identify its actual model and valid status.', 'INFERENCE_METADATA_INVALID');
@@ -487,7 +594,7 @@ export class ChatGPTPlanAssistant {
       }) }, async response => completedText(response, model), 20000, currentAccountId => {
         if (currentAccountId !== accountId || this.model !== model) throw problem('The selected ChatGPT account or model changed before inference. Retry your assessment.', 409);
         this.attemptedCalls++;
-      });
+      }, input?.diagnosticRejectedResponses === true);
       let parsed; try { parsed = JSON.parse(result.text.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/i, '$1')); } catch { throw problem('The completed ChatGPT response was not a JSON assessment.', 502, 'ASSESSMENT_INVALID'); }
       // Grounding is verified here and again by the existing HTTP workflow.
       try { groundAssessment(requests, parsed.assessments); } catch { throw problem('The completed ChatGPT assessment failed clause and request validation.', 502, 'ASSESSMENT_INVALID'); }
