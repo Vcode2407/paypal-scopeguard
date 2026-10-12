@@ -10,7 +10,13 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const PAYPAL_CREDENTIAL_DIRECTORY = resolve(ROOT, 'data', 'paypal-sandbox');
 const MAX_BYTES = 16000;
 const PURPOSE = 'ScopeGuard PayPal sandbox credentials v1';
-const failure = () => new Problem('Protected PayPal sandbox credentials are unavailable or invalid. Configure them again using the local setup command.', 503);
+const failure = diagnostic => {
+  const detail = diagnostic ? ` (Windows helper ${diagnostic.action}: ${diagnostic.reason}; last stage: ${diagnostic.lastStage || 'not_started'}; child exited: ${diagnostic.childExited})` : '';
+  const error = new Problem(`Protected PayPal sandbox credentials are unavailable or invalid. Configure them again using the local setup command.${detail}`, 503);
+  if (diagnostic) error.storageDiagnostic = diagnostic;
+  return error;
+};
+const refuse = error => failure(error instanceof Problem ? error.storageDiagnostic : null);
 const validKey = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,512}$/.test(value);
 function validate(credentials) {
   if (!credentials || typeof credentials !== 'object' || Array.isArray(credentials)
@@ -38,8 +44,14 @@ function decode(text) {
 // bytes travel through private child pipes and are never diagnostic output.
 const WINDOWS_SCRIPT = `
 $ErrorActionPreference='Stop'
+function Write-Stage($stage){[Console]::Error.WriteLine('SCOPEGUARD_STAGE:'+ $stage)}
 try {
+  Write-Stage 'script_started'
+  # WinPS may insert AllUsers modules during startup; enforce the restriction
+  # again inside the helper before any cmdlet's module can be auto-loaded.
+  $env:PSModulePath=[System.IO.Path]::Combine($PSHOME,'Modules')
   Add-Type -AssemblyName System.Security
+  Write-Stage 'assembly_loaded'
   $identity=[System.Security.Principal.WindowsIdentity]::GetCurrent()
   $sid=$identity.User
   $system=New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
@@ -48,10 +60,12 @@ try {
     for($current=[System.IO.Path]::GetFullPath($p);$current;$current=[System.IO.Path]::GetDirectoryName($current)){
       if(([System.IO.File]::GetAttributes($current) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0){throw 'PRIVATE_STORAGE'}
     }
+    Write-Stage 'ordinary_path_checked'
   }
   function Read-PrivateAcl($p,$directory) {
-    if($directory){return [System.IO.Directory]::GetAccessControl($p)}
-    return [System.IO.File]::GetAccessControl($p)
+    if($directory){$result=[System.IO.Directory]::GetAccessControl($p)}else{$result=[System.IO.File]::GetAccessControl($p)}
+    Write-Stage 'acl_read'
+    return $result
   }
   function Check-PrivateAcl($p,$directory) {
     Check-OrdinaryPath $p
@@ -88,6 +102,7 @@ try {
     }
     $acl.SetAccessRuleProtection($true,$false)
     if($directory){[System.IO.Directory]::SetAccessControl($p,$acl)}else{[System.IO.File]::SetAccessControl($p,$acl)}
+    Write-Stage 'acl_set'
     Check-PrivateAcl $p $directory
   }
   switch($env:SCOPEGUARD_PAYPAL_ACTION) {
@@ -109,26 +124,63 @@ try {
     }
     default {throw 'PRIVATE_STORAGE'}
   }
+  Write-Stage 'output_written'
+  exit 0
 } catch {exit 1}
 `;
-function windowsOperation(action, { path = '', directory = false, input = '' } = {}) {
+const HELPER_ACTIONS = ['secure', 'check', 'protect', 'unprotect'];
+const HELPER_STAGES = ['script_started', 'assembly_loaded', 'ordinary_path_checked', 'acl_read', 'acl_set', 'output_written'];
+export function windowsHelperEnvironment(source = process.env) {
+  const systemRoot = source.SystemRoot || source.SYSTEMROOT || 'C:\\Windows';
+  const home = resolve(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0');
   const env = {};
-  for (const name of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA']) {
-    if (process.env[name]) env[name] = process.env[name];
+  for (const name of ['WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'ProgramFiles', 'ProgramFiles(x86)', 'CommonProgramFiles', 'CommonProgramFiles(x86)', 'ProgramData']) {
+    const value = source[name] || source[name.toUpperCase()]; if (value) env[name] = value;
   }
+  // Do not inherit pwsh module paths or unrelated installed modules. The helper
+  // needs only Windows PowerShell's built-in cmdlets and the Windows runtime.
+  return { ...env, SystemRoot: systemRoot, PSModulePath: resolve(home, 'Modules'), PATH: [resolve(systemRoot, 'System32'), systemRoot, home].join(';') };
+}
+export function windowsCredentialOperation(action, { path = '', directory = false, input = '' } = {}, { spawnImpl = spawn, sourceEnv = process.env, deadlineMs = 10000 } = {}) {
+  if (!HELPER_ACTIONS.includes(action) || !Number.isInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 10000) return Promise.reject(failure());
+  const env = windowsHelperEnvironment(sourceEnv);
   Object.assign(env, { SCOPEGUARD_PAYPAL_ACTION: action, SCOPEGUARD_PAYPAL_PATH: path, SCOPEGUARD_PAYPAL_DIRECTORY: directory ? 'yes' : 'no' });
-  const executable = resolve(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const executable = resolve(env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   return new Promise((resolveResult, reject) => {
-    const child = spawn(executable, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(WINDOWS_SCRIPT, 'utf16le').toString('base64')], { windowsHide: true, env, stdio: ['pipe', 'pipe', 'pipe'] });
-    let output = ''; let settled = false;
-    const timer = setTimeout(() => { child.kill(); finish(false); }, 10000);
-    const finish = ok => { if (settled) return; settled = true; clearTimeout(timer); ok ? resolveResult(output) : reject(failure()); };
-    child.stdout.on('data', bytes => { output += bytes.toString('ascii'); if (output.length > MAX_BYTES) { child.kill(); finish(false); } });
-    child.stderr.resume(); // Never copy child diagnostics into application errors.
+    let child;
+    try { child = spawnImpl(executable, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(WINDOWS_SCRIPT, 'utf16le').toString('base64')], { windowsHide: true, env, stdio: ['pipe', 'pipe', 'pipe'] }); }
+    catch { reject(failure({ action, reason: 'process_error', lastStage: null, childExited: false })); return; }
+    let output = ''; let settled = false; let pending = ''; let lastStage = null; let childExited = false;
+    const timer = setTimeout(() => finish(false, 'timeout'), deadlineMs);
+    const finish = (ok, reason = 'process_error') => {
+      if (settled) return; settled = true; clearTimeout(timer);
+      if (ok) { resolveResult(output); return; }
+      const diagnostic = { action, reason, lastStage, childExited };
+      // A descendant can keep a pipe open after the helper exits. Bound both
+      // the promise and its private handles, and stop collecting after refusal.
+      try { child.kill(); } catch {}
+      for (const pipe of [child.stdin, child.stdout, child.stderr]) pipe.destroy();
+      output = ''; pending = ''; reject(failure(diagnostic));
+    };
+    child.stdout.on('data', bytes => { if (settled) return; output += bytes.toString('ascii'); if (output.length > MAX_BYTES) finish(false, 'output_limit'); });
+    child.stderr.on('data', bytes => {
+      if (settled) return;
+      // Discard raw diagnostics; only complete fixed stage labels are retained.
+      pending += bytes.toString('ascii');
+      for (;;) {
+        const newline = pending.indexOf('\n'); if (newline < 0) break;
+        const line = pending.slice(0, newline).replace(/\r$/, ''); pending = pending.slice(newline + 1);
+        const stage = line.startsWith('SCOPEGUARD_STAGE:') ? line.slice(17) : null;
+        if (HELPER_STAGES.includes(stage)) lastStage = stage;
+      }
+      if (pending.length > 1024) pending = '';
+    });
+    child.on('exit', () => { childExited = true; });
     child.on('error', () => finish(false)); child.on('close', code => finish(code === 0));
-    child.stdin.on('error', () => finish(false)); child.stdin.end(input);
+    child.stdin.on('error', () => finish(false, 'input_pipe_error')); child.stdin.end(input);
   });
 }
+const windowsOperation = windowsCredentialOperation;
 const strictBase64 = value => typeof value === 'string' && value.length > 0 && value.length <= MAX_BYTES
   && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value) && Buffer.from(value, 'base64').toString('base64') === value;
 async function ordinaryAncestors(path, allowMissing = false) {
@@ -186,7 +238,7 @@ export class PayPalCredentialStore {
       }
       if (record.protection !== 'posix-owner-only' || typeof record.payload !== 'string') throw failure();
       return decode(record.payload);
-    } catch { throw failure(); }
+    } catch (error) { throw refuse(error); }
   }
   async write(credentials) {
     const clear = encode(credentials); const temporary = resolve(this.directory, `credentials-${randomUUID()}.tmp`);
@@ -218,7 +270,7 @@ export class PayPalCredentialStore {
       try { await this.checkFile(this.file); } catch (error) { if (error.code !== 'ENOENT') throw error; }
       await rename(temporary, this.file); createdTemporary = false;
       await this.checkFile(this.file);
-    } catch { throw failure(); }
+    } catch (error) { throw refuse(error); }
     finally {
       if (createdTemporary) await unlink(temporary).catch(() => {});
       if (lock) { await lock.close().catch(() => {}); await unlink(lockPath).catch(() => {}); }

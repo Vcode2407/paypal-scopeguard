@@ -6,7 +6,9 @@ import { tmpdir } from 'node:os';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { loadPayPalCredentials, PayPalCredentialStore } from '../src/paypal-credentials.js';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { loadPayPalCredentials, PayPalCredentialStore, windowsCredentialOperation, windowsHelperEnvironment } from '../src/paypal-credentials.js';
 
 // Storage tests use synthetic keys and temporary files only. No provider,
 // OAuth, application credential file or running ScopeGuard process is used.
@@ -181,4 +183,43 @@ test('credential importer rejects invalid process input without storage access o
     assert.ok(!result.stderr.includes(storageMarker), `${label}: no credential-store access is allowed`);
     assert.doesNotMatch(result.stderr, /SyntaxError|TypeError|at file:/, `${label}: raw errors and stacks must be excluded`);
   }
+});
+
+test('Windows helper uses only trusted runtime paths and redacts bounded failure-stage diagnostics', async () => {
+  const marker = 'synthetic-private-helper-secret-marker';
+  const sourceEnv = { SystemRoot: 'C:\\Windows', ProgramFiles: 'C:\\Program Files', PATH: marker, PSModulePath: marker,
+    PAYPAL_SANDBOX_SECRET: marker, NEBIUS_API_KEY: marker, NODE_OPTIONS: marker };
+  const environment = windowsHelperEnvironment(sourceEnv);
+  assert.equal(environment.PSModulePath, resolve('C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'Modules'));
+  assert.doesNotMatch(JSON.stringify(environment), new RegExp(marker));
+  assert.equal(Object.hasOwn(environment, 'PAYPAL_SANDBOX_SECRET'), false);
+  let captured; let child;
+  const fakeSpawn = (_executable, args, options) => {
+    captured = { args, options }; child = new EventEmitter();
+    child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.kill = () => true;
+    return child;
+  };
+  const rejected = windowsCredentialOperation('protect', { input: marker }, { spawnImpl: fakeSpawn, sourceEnv });
+  const privateInput = child.stdin.read().toString();
+  child.stderr.write('SCOPEGUARD_STAGE:script_sta');
+  child.stderr.write(`rted\nSCOPEGUARD_STAGE:${marker}\nraw error ${marker}\nSCOPEGUARD_STAGE:assembly_loaded\n`);
+  child.stdout.write(marker); child.emit('exit', 1); child.emit('close', 1);
+  await assert.rejects(rejected, error => {
+    assert.deepEqual(error.storageDiagnostic, { action: 'protect', reason: 'process_error', lastStage: 'assembly_loaded', childExited: true });
+    assert.doesNotMatch(error.message + JSON.stringify(error), new RegExp(marker)); return true;
+  });
+  assert.equal(privateInput, marker, 'Plaintext only travels through the private stdin pipe');
+  assert.ok([child.stdin, child.stdout, child.stderr].every(pipe => pipe.destroyed), 'Rejected helpers close every private pipe');
+  assert.doesNotMatch(JSON.stringify(captured), new RegExp(marker));
+  assert.doesNotMatch(Buffer.from(captured.args.at(-1), 'base64').toString('utf16le'), new RegExp(marker), 'An encoded command must not hide credential input in its script');
+  const stalled = windowsCredentialOperation('check', {}, { spawnImpl: fakeSpawn, sourceEnv, deadlineMs: 20 });
+  child.stderr.write('SCOPEGUARD_STAGE:output_written\n'); child.emit('exit', 0);
+  await assert.rejects(stalled, error => {
+    assert.deepEqual(error.storageDiagnostic, { action: 'check', reason: 'timeout', lastStage: 'output_written', childExited: true }); return true;
+  });
+  assert.ok([child.stdin, child.stdout, child.stderr].every(pipe => pipe.destroyed), 'An exited helper with stalled pipes cannot hold the application open');
+  child.stdout.emit('data', Buffer.alloc(17000)); // Late events must be ignored after rejection.
+  await assert.rejects(windowsCredentialOperation(`invalid-${marker}`, {}, { spawnImpl: () => assert.fail('Unsupported helper actions cannot spawn a process') }), error => {
+    assert.doesNotMatch(error.message + JSON.stringify(error), new RegExp(marker)); return true;
+  });
 });
