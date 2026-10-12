@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-10-12T03:47:47.8909986+00:00",
+  "source": "ScopeGuard local UI and read-only status",
+  "sourceCommit": "2b16ddc80eb4b5429f1a07785e150caa7cb90738",
+  "connected": true,
+  "planSharingGranted": true,
+  "selectedModel": "gpt-6-luna",
+  "selectedModelDisplayName": "GPT-6-Luna",
+  "counterScope": "This server process; counters reset when the server restarts",
+  "before": {
+    "attemptedCalls": 0,
+    "verifiedInferenceCalls": 0
+  },
+  "after": {
+    "attemptedCalls": 1,
+    "verifiedInferenceCalls": 0
+  },
+  "cumulativeObservedAttempts": 2,
+  "cumulativeObservedAcceptedAssessments": 0,
+  "previousAttemptEvidence": "chatgpt-connection-check-2026-10-11.json",
+  "liveAssessmentAccepted": false,
+  "failureCode": "STREAM_INVALID",
+  "uiMessage": "ChatGPT did not return the required response stream (provider HTTP 200; content type: missing). No assessment was accepted.",
+  "providerDiagnostic": {
+    "httpStatus": 200,
+    "contentTypeCategory": "missing"
+  },
+  "providerResponseBodyRead": false,
+  "providerResponseBodyCancelled": true,
+  "underlyingCauseEstablished": false,
+  "returnedModel": null,
+  "completedResponseId": null,
+  "automaticRetries": 0,
+  "paypalActionsByThisCheck": 0,
+  "assessmentExportCreated": false
+}

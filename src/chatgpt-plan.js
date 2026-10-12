@@ -338,7 +338,11 @@ export class ChatGPTPlanConnection {
     try {
       onDispatch(accountId);
       const response = await this.fetch(endpoint, { ...options, headers: { ...options.headers, Authorization: `Bearer ${token}` }, redirect: 'error', signal: controller.signal });
-      if (!response.ok) { await response.body?.cancel(); throw problem(response.status === 429 ? 'ChatGPT plan usage is unavailable or limited. Check app usage in ChatGPT settings; no assessment was accepted.' : 'ChatGPT plan request was refused. Check the connection and selected account; no assessment was accepted.', response.status === 429 ? 503 : 502, 'PLAN_REQUEST_FAILED'); }
+      if (!response.ok) {
+        const diagnostic = streamDiagnostic(response);
+        await response.body?.cancel().catch(() => {});
+        throw providerProblem(response.status === 429 ? 'ChatGPT plan usage is unavailable or limited. Check app usage in ChatGPT settings.' : 'ChatGPT plan request was refused. Check the connection and selected account.', diagnostic, response.status === 429 ? 503 : 502, 'PLAN_REQUEST_FAILED');
+      }
       const result = await consume(response, accountId);
       if (controller.signal.aborted || this.active()?.clientId !== accountId || this.blocked.has(accountId)) throw problem('The ChatGPT account changed or disconnected during this request. No result was accepted.', 409);
       return result;
@@ -398,32 +402,48 @@ function streamDiagnostic(response) {
   return { httpStatus, contentTypeCategory };
 }
 
+function providerProblem(message, diagnostic, status = 502, code = 'STREAM_INVALID') {
+  const error = problem(`${message} (provider HTTP ${diagnostic.httpStatus ?? 'unavailable'}; content type: ${diagnostic.contentTypeCategory}). No assessment was accepted.`, status, code);
+  error.providerDiagnostic = diagnostic;
+  return error;
+}
+
+function validCompletedOutput(output) {
+  if (output === undefined) return true; // Previously supported delta-only completion.
+  if (!Array.isArray(output)) return false;
+  return output.every(item => item && typeof item === 'object' && !Array.isArray(item)
+    && (item.type !== 'message' || Array.isArray(item.content) && item.content.every(part =>
+      part && typeof part === 'object' && !Array.isArray(part)
+      && (part.type !== 'output_text' || typeof part.text === 'string'))));
+}
+
 async function completedText(response, requestedModel) {
   const diagnostic = streamDiagnostic(response);
+  const refuse = (message, code = 'STREAM_INVALID') => providerProblem(message, diagnostic, 502, code);
   if (diagnostic.contentTypeCategory !== 'text/event-stream' || !response.body) {
     // Do not read an unexpected body or expose header parameters/status text.
     await response.body?.cancel().catch(() => {});
-    const error = problem(`ChatGPT did not return the required response stream (provider HTTP ${diagnostic.httpStatus ?? 'unavailable'}; content type: ${diagnostic.contentTypeCategory}). No assessment was accepted.`, 502, 'STREAM_INVALID');
-    error.providerDiagnostic = diagnostic;
-    throw error;
+    throw refuse('ChatGPT did not return the required response stream');
   }
   const reader = response.body.getReader(); const decoder = new TextDecoder();
   let bytes = 0; let pending = ''; let data = []; let deltaText = ''; let completed = null;
   const dispatch = () => {
     if (!data.length) return; const raw = data.join('\n'); data = [];
     if (raw === '[DONE]') return;
-    let event; try { event = JSON.parse(raw); } catch { throw problem('ChatGPT returned an unreadable stream event.', 502, 'STREAM_INVALID'); }
-    if (['error', 'response.failed', 'response.incomplete'].includes(event.type)) throw problem('ChatGPT did not complete the assessment. Check plan usage or reconnect, then retry.', 502, 'INFERENCE_NOT_COMPLETED');
-    if (event.type === 'response.output_text.delta') { if (!isText(event.delta, 16000)) throw problem('The assessment text exceeded its limit.', 502, 'PROVIDER_OUTPUT_LIMIT'); deltaText += event.delta; if (deltaText.length > 16000) throw problem('The assessment text exceeded its limit.', 502, 'PROVIDER_OUTPUT_LIMIT'); }
+    let event; try { event = JSON.parse(raw); } catch { throw refuse('ChatGPT returned an unreadable stream event.'); }
+    if (!event || typeof event !== 'object' || Array.isArray(event) || !isText(event.type, 200)) throw refuse('ChatGPT returned an invalid stream event.');
+    if (['error', 'response.failed', 'response.incomplete'].includes(event.type)) throw refuse('ChatGPT did not complete the assessment. Review plan usage and the connection before deciding whether to retry.', 'INFERENCE_NOT_COMPLETED');
+    if (event.type === 'response.output_text.delta') { if (!isText(event.delta, 16000)) throw refuse('The assessment text exceeded its limit.', 'PROVIDER_OUTPUT_LIMIT'); deltaText += event.delta; if (deltaText.length > 16000) throw refuse('The assessment text exceeded its limit.', 'PROVIDER_OUTPUT_LIMIT'); }
     if (event.type === 'response.completed') {
-      if (completed || event.response?.status !== 'completed' || !validModel(event.response.model)) throw problem('Completed inference did not identify its actual model and valid status.', 502, 'INFERENCE_METADATA_INVALID');
+      if (completed || event.response?.status !== 'completed' || !validModel(event.response.model)) throw refuse('Completed inference did not identify its actual model and valid status.', 'INFERENCE_METADATA_INVALID');
+      if (!validCompletedOutput(event.response.output)) throw refuse('Completed inference included invalid output metadata.', 'INFERENCE_METADATA_INVALID');
       completed = event.response;
     }
   };
   try {
     while (true) {
       const { value: chunk, done } = await reader.read(); if (done) break;
-      bytes += chunk.byteLength; if (bytes > 96000) throw problem('The ChatGPT response stream exceeded 96 KB. No assessment was accepted.', 502, 'PROVIDER_OUTPUT_LIMIT');
+      bytes += chunk.byteLength; if (bytes > 96000) throw refuse('The ChatGPT response stream exceeded 96 KB.', 'PROVIDER_OUTPUT_LIMIT');
       pending += decoder.decode(chunk, { stream: true });
       let newline;
       while ((newline = pending.indexOf('\n')) >= 0) {
@@ -432,10 +452,10 @@ async function completedText(response, requestedModel) {
       }
     }
     pending += decoder.decode(); if (pending.startsWith('data:')) data.push(pending.slice(5).trim()); dispatch();
-    if (!completed) throw problem('ChatGPT stream ended without response.completed. No assessment was accepted.', 502, 'INFERENCE_NOT_COMPLETED');
-    const output = completed.output?.filter(item => item.type === 'message' && item.role === 'assistant').flatMap(item => item.content || []).filter(item => item.type === 'output_text').map(item => item.text).join('');
+    if (!completed) throw refuse('ChatGPT stream ended without response.completed.', 'INFERENCE_NOT_COMPLETED');
+    const output = completed.output?.filter(item => item.type === 'message' && item.role === 'assistant').flatMap(item => item.content).filter(item => item.type === 'output_text').map(item => item.text).join('');
     const text = output || deltaText;
-    if (!isText(text, 16000)) throw problem('The completed assessment text was empty or oversized.', 502, 'PROVIDER_OUTPUT_LIMIT');
+    if (!isText(text, 16000)) throw refuse('The completed assessment text was empty or oversized.', 'PROVIDER_OUTPUT_LIMIT');
     return { text, responseId: typeof completed.id === 'string' && completed.id.length <= 200 ? completed.id : null, requestedModel, returnedModel: completed.model, modelMatchesRequested: completed.model === requestedModel };
   } finally { await reader.cancel().catch(() => {}); }
 }

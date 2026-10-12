@@ -318,6 +318,89 @@ test('stream MIME parameters remain supported while an absent body cannot bypass
   assert.equal(blocked.status().verifiedInferenceCalls, 0);
 });
 
+test('non-OK provider responses retain only status/type and cancel without reading or retrying', async t => {
+  const marker = 'synthetic-private-refusal-body-header';
+  for (const status of [400, 401, 403, 429, 503]) {
+    let reads = 0, cancelled = false;
+    const body = new ReadableStream({
+      pull(controller) { reads++; controller.enqueue(Buffer.from(marker)); },
+      cancel() { cancelled = true; },
+    }, { highWaterMark: 0 });
+    const response = { ok: false, status, statusText: marker, body,
+      headers: new Headers({ 'Content-Type': `application/json; private=${marker}`, 'X-Request-ID': marker }) };
+    const { connection, fixture } = await connected(t, { responses: () => response });
+    await connection.selectModel(MODEL);
+    const assistant = new ChatGPTPlanAssistant({ connection, maxCalls: 1 });
+    await assert.rejects(assistant.assess(SAMPLE), error => {
+      assert.equal(error.code, 'PLAN_REQUEST_FAILED');
+      assert.equal(error.status, status === 429 ? 503 : 502);
+      assert.deepEqual(error.providerDiagnostic, { httpStatus: status, contentTypeCategory: 'application/json' });
+      assert.match(error.message, new RegExp(`provider HTTP ${status}; content type: application/json`));
+      assert.doesNotMatch(error.message + JSON.stringify(error), /synthetic-private|X-Request-ID|statusText|stub-access|stub-refresh/);
+      return true;
+    });
+    assert.equal(reads, 0); assert.equal(cancelled, true);
+    assert.equal(assistant.status().attemptedCalls, 1); assert.equal(assistant.status().verifiedInferenceCalls, 0);
+    await assert.rejects(assistant.assess(SAMPLE), error => error.code === 'PROVIDER_CALL_LIMIT');
+    assert.equal(fixture.apiCalls, 1);
+  }
+});
+
+test('a missing MIME header rejects even a synthetic completed SSE body without reading it', async t => {
+  let reads = 0, cancelled = false;
+  const completedSSE = await stream().text();
+  const body = new ReadableStream({
+    pull(controller) { reads++; controller.enqueue(Buffer.from(completedSSE)); },
+    cancel() { cancelled = true; },
+  }, { highWaterMark: 0 });
+  const { connection, fixture } = await connected(t, { responses: () => ({ ok: true, status: 200, headers: new Headers(), body }) });
+  await connection.selectModel(MODEL);
+  const assistant = new ChatGPTPlanAssistant({ connection, maxCalls: 1 });
+  await assert.rejects(assistant.assess(SAMPLE), error => error.code === 'STREAM_INVALID'
+    && error.providerDiagnostic.httpStatus === 200 && error.providerDiagnostic.contentTypeCategory === 'missing');
+  assert.equal(reads, 0); assert.equal(cancelled, true);
+  assert.equal(assistant.status().attemptedCalls, 1); assert.equal(assistant.status().verifiedInferenceCalls, 0);
+  assert.equal(fixture.apiCalls, 1);
+});
+
+test('malformed SSE events and completion metadata retain safe diagnostics and cancel before later chunks', async t => {
+  const marker = 'synthetic-private-event-body-header';
+  const completion = output => JSON.stringify({ type: 'response.completed', response: { status: 'completed', model: MODEL, output } });
+  const cases = [
+    { raw: `not-json-${marker}`, code: 'STREAM_INVALID' },
+    { raw: 'null', code: 'STREAM_INVALID' },
+    { raw: '[]', code: 'STREAM_INVALID' },
+    { raw: JSON.stringify({ private: marker }), code: 'STREAM_INVALID' },
+    { raw: completion({ private: marker }), code: 'INFERENCE_METADATA_INVALID' },
+    { raw: completion([null]), code: 'INFERENCE_METADATA_INVALID' },
+    { raw: completion([{ type: 'message', role: 'assistant', content: null }]), code: 'INFERENCE_METADATA_INVALID' },
+    { raw: completion([{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: { private: marker } }] }]), code: 'INFERENCE_METADATA_INVALID' },
+    { raw: JSON.stringify({ type: 'response.failed', response: { error: { message: marker, code: marker } } }), code: 'INFERENCE_NOT_COMPLETED' },
+  ];
+  for (const scenario of cases) {
+    let reads = 0, cancelled = false;
+    const body = new ReadableStream({
+      pull(controller) { reads++; controller.enqueue(Buffer.from(reads === 1 ? `data: ${scenario.raw}\n\n` : marker)); },
+      cancel() { cancelled = true; },
+    }, { highWaterMark: 0 });
+    const { connection, fixture } = await connected(t, { responses: () => new Response(body,
+      { headers: { 'Content-Type': `text/event-stream; private=${marker}`, 'X-Private-Identity': marker } }) });
+    await connection.selectModel(MODEL);
+    const assistant = new ChatGPTPlanAssistant({ connection, maxCalls: 1 });
+    await assert.rejects(assistant.assess(SAMPLE), error => {
+      assert.equal(error.code, scenario.code);
+      assert.deepEqual(error.providerDiagnostic, { httpStatus: 200, contentTypeCategory: 'text/event-stream' });
+      assert.match(error.message, /provider HTTP 200; content type: text\/event-stream/);
+      assert.doesNotMatch(error.message + JSON.stringify(error), /synthetic-private|X-Private-Identity|stub-access|stub-refresh/);
+      return true;
+    });
+    assert.equal(reads, 1); assert.equal(cancelled, true);
+    assert.equal(assistant.status().attemptedCalls, 1); assert.equal(assistant.status().verifiedInferenceCalls, 0);
+    await assert.rejects(assistant.assess(SAMPLE), error => error.code === 'PROVIDER_CALL_LIMIT');
+    assert.equal(fixture.apiCalls, 1);
+  }
+});
+
 test('returned canonical model metadata is preserved without claiming alias equivalence', async t => {
   const returnedModel = `${MODEL}-2026-10-09`;
   const { connection } = await connected(t, { responses: () => stream({ model: returnedModel }) });
