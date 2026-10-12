@@ -7,6 +7,7 @@ import {randomUUID} from 'node:crypto';
 import {Problem,Workflow,SCOPE,SAMPLE,groundAssessment,invoicePayload,validateRequests,verifyInvoiceTotal} from './domain.js';
 import {ScopeAssistant,PayPalSandbox} from './providers.js';
 import {ChatGPTPlanConnection,ChatGPTPlanAssistant} from './chatgpt-plan.js';
+import {loadPayPalCredentials} from './paypal-credentials.js';
 const ROOT=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const STATIC={'/':['index.html','text/html'],'/style.css':['style.css','text/css'],'/app.js':['app.js','text/javascript'],'/favicon.ico':['favicon.svg','image/svg+xml']};
 async function body(request){
@@ -101,7 +102,9 @@ if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   try{loadEnvFile(resolve(ROOT,'.env'));}catch(error){if(error.code!=='ENOENT')throw error;}
   let planConnection=null,planInitializationError=null;
   try{planConnection=await ChatGPTPlanConnection.create();}catch(error){planInitializationError=error instanceof Problem?error.message:'Protected ChatGPT sign-in storage could not be initialized.';console.log(`ChatGPT plan setup unavailable: ${planInitializationError}`);}
-  const running=await startServer({port:Number(process.env.PORT||4185),assistant:new ScopeAssistant({key:process.env.NEBIUS_API_KEY,model:process.env.NEBIUS_MODEL}),paypal:new PayPalSandbox({clientId:process.env.PAYPAL_SANDBOX_CLIENT_ID,secret:process.env.PAYPAL_SANDBOX_SECRET}),planConnection,planInitializationError});
+  let paypalCredentials=null;
+  try{paypalCredentials=await loadPayPalCredentials();}catch{console.log('PayPal sandbox setup unavailable: protected credentials or environment configuration are invalid. Run the local PayPal setup command.');}
+  const running=await startServer({port:Number(process.env.PORT||4185),assistant:new ScopeAssistant({key:process.env.NEBIUS_API_KEY,model:process.env.NEBIUS_MODEL}),paypal:new PayPalSandbox(paypalCredentials||{}),planConnection,planInitializationError});
   console.log(`ScopeGuard: ${running.url}`);console.log('PayPal sandbox only. AI and sandbox access require separate configuration.');
   for(const signal of ['SIGINT','SIGTERM'])process.on(signal,async()=>{await running.close();await planConnection?.close();process.exit(0);});
 }
